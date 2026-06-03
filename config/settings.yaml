@@ -1,0 +1,506 @@
+default_project_dir: /Users/wanghaha/GeoChem_Projects
+providers:
+- name: anthropic
+  display_name: Anthropic
+  api_key: null
+  base_url: null
+  api_format: native
+  enabled: true
+  models:
+  - name: claude-sonnet-4-20250514
+    display_name: Claude Sonnet 4
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: true
+    pricing:
+      input_price: 0.003
+      output_price: 0.015
+      cached_input_price: 0.0
+  - name: claude-haiku-4-5-20251001
+    display_name: Claude Haiku 4.5
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: true
+    pricing:
+      input_price: 0.0008
+      output_price: 0.004
+      cached_input_price: 0.0
+  default_headers: {}
+- name: openai
+  display_name: OpenAI
+  api_key: null
+  base_url: null
+  api_format: openai
+  enabled: true
+  models:
+  - name: gpt-4o
+    display_name: GPT-4o
+    max_tokens: 16384
+    supports_streaming: true
+    supports_vision: true
+    pricing:
+      input_price: 0.0025
+      output_price: 0.01
+      cached_input_price: 0.0
+  - name: gpt-4o-mini
+    display_name: GPT-4o Mini
+    max_tokens: 16384
+    supports_streaming: true
+    supports_vision: true
+    pricing:
+      input_price: 0.00015
+      output_price: 0.0006
+      cached_input_price: 0.0
+  default_headers: {}
+- name: deepseek
+  display_name: DeepSeek
+  api_key: null
+  base_url: https://api.deepseek.com/v1
+  api_format: openai
+  enabled: true
+  models:
+  - name: deepseek-chat
+    display_name: DeepSeek V3
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.00014
+      output_price: 0.00028
+      cached_input_price: 0.0
+  - name: deepseek-reasoner
+    display_name: DeepSeek R1
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.00055
+      output_price: 0.00219
+      cached_input_price: 0.0
+  default_headers: {}
+- name: xiaomi
+  display_name: Xiaomi MiMo (OpenAI)
+  api_key: ${MIMO_API_KEY}
+  base_url: https://token-plan-cn.xiaomimimo.com/v1
+  api_format: openai
+  enabled: true
+  models:
+  - name: mimo-v2.5-pro
+    display_name: MiMo V2.5 Pro
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: mimo-v2.5
+    display_name: MiMo V2.5
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: mimo-v2-pro
+    display_name: MiMo V2 Pro
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  default_headers: {}
+- name: xiaomi-anthropic
+  display_name: Xiaomi MiMo (Anthropic)
+  api_key: ${MIMO_API_KEY}
+  base_url: https://token-plan-cn.xiaomimimo.com/anthropic
+  api_format: anthropic
+  enabled: true
+  models:
+  - name: mimo-v2.5-pro
+    display_name: MiMo V2.5 Pro
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: mimo-v2.5
+    display_name: MiMo V2.5
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  default_headers: {}
+- name: openrouter
+  display_name: OpenRouter
+  api_key: ${OPENROUTER_API_KEY}
+  base_url: https://openrouter.ai/api/v1
+  api_format: openai
+  enabled: true
+  models:
+  - name: meta-llama/llama-3.1-8b-instruct:free
+    display_name: Llama 3.1 8B (Free)
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: google/gemma-2-9b-it:free
+    display_name: Gemma 2 9B (Free)
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: mistralai/mistral-7b-instruct:free
+    display_name: Mistral 7B (Free)
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen-2.5-7b-instruct:free
+    display_name: Qwen 2.5 7B (Free)
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  default_headers:
+    HTTP-Referer: https://github.com/geochem-agent
+    X-Title: GeoChem Data Curation Agent
+- name: qwen
+  display_name: Alibaba Qwen (DashScope)
+  api_key: ${DASHSCOPE_API_KEY}
+  base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  api_format: openai
+  enabled: true
+  models:
+  - name: qwen-max
+    display_name: Qwen Max
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen-plus
+    display_name: Qwen Plus
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen-turbo
+    display_name: Qwen Turbo
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen-long
+    display_name: Qwen Long
+    max_tokens: 10000
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  default_headers: {}
+- name: zhipu
+  display_name: Zhipu AI (GLM)
+  api_key: null
+  base_url: https://open.bigmodel.cn/api/paas/v4/
+  api_format: openai
+  enabled: true
+  models:
+  - name: glm-4-plus
+    display_name: GLM-4 Plus
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: glm-4-flash
+    display_name: GLM-4 Flash
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: glm-4-long
+    display_name: GLM-4 Long
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  default_headers: {}
+- name: minimax
+  display_name: MiniMax
+  api_key: null
+  base_url: https://api.minimax.chat/v1
+  api_format: openai
+  enabled: true
+  models:
+  - name: MiniMax-Text-01
+    display_name: MiniMax Text 01
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  default_headers: {}
+- name: moonshot
+  display_name: Moonshot (Kimi)
+  api_key: null
+  base_url: https://api.moonshot.cn/v1
+  api_format: openai
+  enabled: true
+  models:
+  - name: moonshot-v1-8k
+    display_name: Moonshot V1 8K
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: moonshot-v1-32k
+    display_name: Moonshot V1 32K
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: moonshot-v1-128k
+    display_name: Moonshot V1 128K
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  default_headers: {}
+- name: doubao
+  display_name: ByteDance Doubao
+  api_key: null
+  base_url: https://ark.cn-beijing.volces.com/api/v3
+  api_format: openai
+  enabled: true
+  models:
+  - name: doubao-pro-32k
+    display_name: Doubao Pro 32K
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: doubao-lite-32k
+    display_name: Doubao Lite 32K
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  default_headers: {}
+- name: baichuan
+  display_name: Baichuan AI
+  api_key: null
+  base_url: https://api.baichuan-ai.com/v1
+  api_format: openai
+  enabled: true
+  models:
+  - name: Baichuan2-Turbo
+    display_name: Baichuan2 Turbo
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: Baichuan2-Turbo-192k
+    display_name: Baichuan2 Turbo 192K
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  default_headers: {}
+- name: hunyuan
+  display_name: Tencent Hunyuan
+  api_key: null
+  base_url: https://api.hunyuan.cloud.tencent.com/v1
+  api_format: openai
+  enabled: true
+  models:
+  - name: hunyuan-turbos-latest
+    display_name: Hunyuan Turbo
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: hunyuan-pro
+    display_name: Hunyuan Pro
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: hunyuan-lite
+    display_name: Hunyuan Lite
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  default_headers: {}
+- name: yi
+  display_name: 01.AI Yi
+  api_key: null
+  base_url: https://api.lingyiwanwu.com/v1
+  api_format: openai
+  enabled: true
+  models:
+  - name: yi-large
+    display_name: Yi Large
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: yi-medium
+    display_name: Yi Medium
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  default_headers: {}
+- name: stepfun
+  display_name: StepFun
+  api_key: null
+  base_url: https://api.stepfun.com/v1
+  api_format: openai
+  enabled: true
+  models:
+  - name: step-1-8k
+    display_name: Step-1 8K
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: step-1-32k
+    display_name: Step-1 32K
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  default_headers: {}
+- name: ollama
+  display_name: Ollama (Local)
+  api_key: ollama
+  base_url: http://localhost:11434/v1
+  api_format: openai
+  enabled: true
+  models: []
+  default_headers: {}
+task_models:
+  _default:
+    provider: xiaomi-anthropic
+    model: mimo-v2.5-pro
+    temperature: 0.1
+    max_tokens: 4096
+  field_mapping:
+    provider: anthropic
+    model: claude-sonnet-4-20250514
+    temperature: 0.1
+    max_tokens: 4096
+  relevance_judge:
+    provider: openai
+    model: gpt-4o-mini
+    temperature: 0.0
+    max_tokens: 4096
+  unit_suggestion:
+    provider: deepseek
+    model: deepseek-chat
+    temperature: 0.0
+    max_tokens: 4096
+  data_extraction:
+    provider: anthropic
+    model: claude-sonnet-4-20250514
+    temperature: 0.0
+    max_tokens: 8192
+fallback_chain:
+- provider: anthropic
+  model: claude-sonnet-4-20250514
+- provider: openai
+  model: gpt-4o
+- provider: deepseek
+  model: deepseek-chat
+log_level: INFO
+log_dir: logs
+ui_preferences:
+  tested_models:
+  - provider: xiaomi-anthropic
+    model: mimo-v2.5-pro
+  - provider: openrouter
+    model: openrouter/free
