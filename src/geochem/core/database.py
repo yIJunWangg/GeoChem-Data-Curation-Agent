@@ -356,6 +356,167 @@ CREATE TABLE IF NOT EXISTS record_patches (
     FOREIGN KEY (learned_rule_id) REFERENCES learned_extraction_rules(rule_id)
 );
 
+CREATE TABLE IF NOT EXISTS extraction_candidates (
+    candidate_id  TEXT PRIMARY KEY,
+    project_id    TEXT NOT NULL,
+    article_id    TEXT NOT NULL,
+    evidence_id   TEXT NOT NULL,
+    source_type   TEXT DEFAULT '',
+    target_header TEXT DEFAULT '',
+    target_field  TEXT DEFAULT '',
+    target_unit   TEXT DEFAULT '',
+    value         TEXT DEFAULT '',
+    source_unit   TEXT DEFAULT '',
+    confidence    REAL DEFAULT 0.0,
+    risk_level    TEXT DEFAULT 'medium',
+    status        TEXT DEFAULT 'pending',
+    reason        TEXT DEFAULT '',
+    created_at    TEXT NOT NULL,
+    FOREIGN KEY (project_id) REFERENCES projects(project_id),
+    FOREIGN KEY (article_id) REFERENCES articles(article_id),
+    FOREIGN KEY (evidence_id) REFERENCES article_evidence(evidence_id)
+);
+
+CREATE TABLE IF NOT EXISTS document_elements (
+    element_id       TEXT PRIMARY KEY,
+    project_id       TEXT NOT NULL,
+    article_id       TEXT NOT NULL,
+    resource_id      TEXT NOT NULL,
+    legacy_source_id TEXT DEFAULT '',
+    element_type     TEXT NOT NULL,
+    page_number      INTEGER,
+    bbox_json        TEXT DEFAULT '[]',
+    text_content     TEXT DEFAULT '',
+    context_text     TEXT DEFAULT '',
+    caption          TEXT DEFAULT '',
+    preview_path     TEXT DEFAULT '',
+    raw_table_json   TEXT DEFAULT '{}',
+    matched_headers_json TEXT DEFAULT '[]',
+    relevance_score REAL DEFAULT 0.0,
+    content_hash     TEXT DEFAULT '',
+    parser_version   TEXT DEFAULT 'layout-v1',
+    status           TEXT DEFAULT 'candidate',
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL,
+    FOREIGN KEY (project_id) REFERENCES projects(project_id),
+    FOREIGN KEY (article_id) REFERENCES articles(article_id),
+    FOREIGN KEY (resource_id) REFERENCES resources(resource_id)
+);
+
+CREATE TABLE IF NOT EXISTS workbench_sessions (
+    session_id       TEXT PRIMARY KEY,
+    project_id       TEXT NOT NULL,
+    article_id       TEXT NOT NULL,
+    header_config_id TEXT,
+    current_step     TEXT DEFAULT 'discovery',
+    discovery_status TEXT DEFAULT 'pending',
+    discovery_hash   TEXT DEFAULT '',
+    active_batch_id  TEXT,
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL,
+    UNIQUE(project_id, article_id),
+    FOREIGN KEY (project_id) REFERENCES projects(project_id),
+    FOREIGN KEY (article_id) REFERENCES articles(article_id),
+    FOREIGN KEY (header_config_id) REFERENCES header_configs(config_id)
+);
+
+CREATE TABLE IF NOT EXISTS element_selections (
+    selection_id TEXT PRIMARY KEY,
+    session_id   TEXT NOT NULL,
+    element_id   TEXT NOT NULL,
+    selected_by  TEXT DEFAULT 'user',
+    status       TEXT DEFAULT 'selected',
+    created_at   TEXT NOT NULL,
+    UNIQUE(session_id, element_id),
+    FOREIGN KEY (session_id) REFERENCES workbench_sessions(session_id),
+    FOREIGN KEY (element_id) REFERENCES document_elements(element_id)
+);
+
+CREATE TABLE IF NOT EXISTS extraction_batches (
+    batch_id         TEXT PRIMARY KEY,
+    project_id       TEXT NOT NULL,
+    article_id       TEXT NOT NULL,
+    session_id       TEXT NOT NULL,
+    header_config_id TEXT,
+    status           TEXT DEFAULT 'pending',
+    record_count     INTEGER DEFAULT 0,
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL,
+    FOREIGN KEY (project_id) REFERENCES projects(project_id),
+    FOREIGN KEY (article_id) REFERENCES articles(article_id),
+    FOREIGN KEY (session_id) REFERENCES workbench_sessions(session_id)
+);
+
+CREATE TABLE IF NOT EXISTS candidate_records (
+    candidate_record_id TEXT PRIMARY KEY,
+    batch_id         TEXT NOT NULL,
+    article_id       TEXT NOT NULL,
+    sample_key       TEXT NOT NULL,
+    sample_id        TEXT DEFAULT '',
+    row_index        INTEGER NOT NULL,
+    merge_status     TEXT DEFAULT 'unmatched',
+    quality_grade    TEXT DEFAULT 'D',
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL,
+    UNIQUE(batch_id, sample_key),
+    FOREIGN KEY (batch_id) REFERENCES extraction_batches(batch_id),
+    FOREIGN KEY (article_id) REFERENCES articles(article_id)
+);
+
+CREATE TABLE IF NOT EXISTS candidate_cells (
+    cell_id          TEXT PRIMARY KEY,
+    candidate_record_id TEXT NOT NULL,
+    header_id        TEXT DEFAULT '',
+    target_header    TEXT NOT NULL,
+    target_field     TEXT DEFAULT '',
+    target_unit      TEXT DEFAULT '',
+    value            TEXT DEFAULT '',
+    original_value   TEXT DEFAULT '',
+    original_field   TEXT DEFAULT '',
+    original_unit    TEXT DEFAULT '',
+    confidence       REAL DEFAULT 0.0,
+    risk_level       TEXT DEFAULT 'medium',
+    mapping_status   TEXT DEFAULT 'pending',
+    mapping_id       TEXT,
+    element_id       TEXT,
+    page_number      INTEGER,
+    bbox_json        TEXT DEFAULT '[]',
+    alternatives_json TEXT DEFAULT '[]',
+    review_status    TEXT DEFAULT 'pending',
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL,
+    UNIQUE(candidate_record_id, target_header),
+    FOREIGN KEY (candidate_record_id) REFERENCES candidate_records(candidate_record_id),
+    FOREIGN KEY (element_id) REFERENCES document_elements(element_id)
+);
+
+CREATE TABLE IF NOT EXISTS workflow_tasks (
+    task_id       TEXT PRIMARY KEY,
+    project_id    TEXT NOT NULL,
+    article_id    TEXT,
+    task_type     TEXT NOT NULL,
+    status        TEXT DEFAULT 'pending',
+    progress      REAL DEFAULT 0.0,
+    message       TEXT DEFAULT '',
+    result_json   TEXT DEFAULT '{}',
+    error_message TEXT DEFAULT '',
+    created_at    TEXT NOT NULL,
+    started_at    TEXT,
+    finished_at   TEXT,
+    FOREIGN KEY (project_id) REFERENCES projects(project_id)
+);
+
+CREATE TABLE IF NOT EXISTS workflow_task_events (
+    event_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id    TEXT NOT NULL,
+    level      TEXT DEFAULT 'INFO',
+    message    TEXT NOT NULL,
+    progress   REAL DEFAULT 0.0,
+    details_json TEXT DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (task_id) REFERENCES workflow_tasks(task_id)
+);
+
 CREATE TABLE IF NOT EXISTS llm_calls (
     call_id          TEXT PRIMARY KEY,
     project_id       TEXT DEFAULT '',
@@ -414,6 +575,16 @@ CREATE INDEX IF NOT EXISTS idx_processing_events_project ON processing_events(pr
 CREATE INDEX IF NOT EXISTS idx_teaching_events_project ON teaching_events(project_id);
 CREATE INDEX IF NOT EXISTS idx_learned_rules_project ON learned_extraction_rules(project_id);
 CREATE INDEX IF NOT EXISTS idx_record_patches_table ON record_patches(table_id);
+CREATE INDEX IF NOT EXISTS idx_extraction_candidates_evidence ON extraction_candidates(evidence_id);
+CREATE INDEX IF NOT EXISTS idx_extraction_candidates_project ON extraction_candidates(project_id);
+CREATE INDEX IF NOT EXISTS idx_document_elements_article ON document_elements(article_id);
+CREATE INDEX IF NOT EXISTS idx_document_elements_resource ON document_elements(resource_id);
+CREATE INDEX IF NOT EXISTS idx_element_selections_session ON element_selections(session_id);
+CREATE INDEX IF NOT EXISTS idx_extraction_batches_article ON extraction_batches(article_id);
+CREATE INDEX IF NOT EXISTS idx_candidate_records_batch ON candidate_records(batch_id);
+CREATE INDEX IF NOT EXISTS idx_candidate_cells_record ON candidate_cells(candidate_record_id);
+CREATE INDEX IF NOT EXISTS idx_workflow_tasks_project ON workflow_tasks(project_id);
+CREATE INDEX IF NOT EXISTS idx_workflow_task_events_task ON workflow_task_events(task_id);
 """
 
 

@@ -20,8 +20,10 @@ GeoChem Data Curation Agent automates the extraction of geochemical data (major 
 - **MemoryStore**: Confirmed mapping rules persisted for reuse across projects
 - **Calculation archive**: Full provenance for unit conversions and formula calculations
 - **Token tracking**: Every LLM call logged with token usage and latency
-- **SQLite database**: 17 tables with cell-level provenance
-- **CLI-first**: Full pipeline operable from command line
+- **Positioned PDF evidence**: page-level tables, figures and paragraphs with normalized bounding boxes
+- **Sample-level candidate grid**: exact user headers, conservative SampleID merge and cell evidence
+- **Local Web UI**: React workbench backed by a localhost-only FastAPI service
+- **CLI compatibility**: Existing curation pipeline remains operable from command line
 
 ## Tech Stack
 
@@ -35,7 +37,10 @@ GeoChem Data Curation Agent automates the extraction of geochemical data (major 
 | Excel/CSV | openpyxl, pandas |
 | LLM SDKs | openai, anthropic |
 | Config | PyYAML |
-| UI (planned) | PySide6 |
+| Local API | FastAPI + SSE |
+| UI | React + TypeScript + Vite |
+| PDF viewer | PDF.js / React-PDF |
+| Candidate grid | AG Grid Community |
 
 ## Installation
 
@@ -49,6 +54,12 @@ source .venv/bin/activate
 
 # Install in editable mode
 pip install -e ".[dev]"
+
+# Install and build the Web UI
+cd web
+npm install
+npm run build
+cd ..
 ```
 
 ## Quick Start
@@ -63,6 +74,16 @@ export MIMO_API_KEY="your-mimo-key"
 export OPENROUTER_API_KEY="sk-or-..."
 # ... other providers as needed
 ```
+
+### Start the local Web application
+
+```bash
+.venv/bin/geochem-ui
+# Open http://127.0.0.1:8765
+```
+
+The previous Qt interface remains available during migration as
+`.venv/bin/geochem-legacy-ui`.
 
 ### 2. Create a project
 
@@ -258,14 +279,15 @@ pytest tests/ --cov=geochem --cov-report=term-missing
   - [x] CLI commands: `new-project`, `list-projects`, `status`, `import-schema`
   - [x] 77 unit tests passing
 
-### Pending
+### Current Work Packages
 
-- [ ] **WP2**: Document ingestion (PDF/Excel/CSV import, resource inventory)
-- [ ] **WP3**: Data extraction (table extractors for Excel, CSV, PDF, HTML)
-- [ ] **WP4**: Schema & unit engine (field mapping, unit conversion, calculation archive)
-- [ ] **WP5**: Review & memory (human review queue, rule persistence, rollback)
-- [ ] **WP6**: Standardized export (Excel/CSV/JSONL export, provenance tracing)
-- [ ] **WP7**: UI MVP (PySide6 desktop interface)
+- [x] **WP2**: Document ingestion and article-scoped resources
+- [x] **WP3**: Excel/CSV/PDF candidate extraction
+- [x] **WP4**: Header mapping, units and calculation archive
+- [x] **WP5**: Review, teaching patches and rule memory
+- [x] **WP6**: Standardized export, trace and cost reporting
+- [x] **WP7**: Local Web UI foundation and schema-driven agent workbench
+- [ ] **WP8**: Desktop packaging, large-document performance and production visual regression
 
 ## License
 

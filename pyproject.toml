@@ -20,6 +20,9 @@ dependencies = [
     "rich>=13.0",
     "openai>=1.0",
     "anthropic>=0.20",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]
@@ -31,7 +34,9 @@ dev = [
 
 [project.scripts]
 geochem = "geochem.cli:app"
-geochem-ui = "geochem.ui.app:main"
+geochem-ui = "geochem.web.server:main"
+geochem-web = "geochem.web.server:main"
+geochem-legacy-ui = "geochem.ui.app:main"
 
 [build-system]
 requires = ["setuptools>=68.0"]
