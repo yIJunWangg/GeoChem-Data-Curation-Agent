@@ -310,6 +310,113 @@ function CellInspector({ cell, elements, projectId }: { cell: CandidateCell; ele
 }
 
 function MappingReview({ payload, elements, projectId, onRefresh, onNavigate }: { payload?: BatchPayload; elements: DocumentElement[]; projectId: string; onRefresh: () => void; onNavigate: (path: string) => void }) {
-  const unresolved = payload?.records.flatMap((record) => Object.values(record.cells).filter((cell) => cell.mapping_status !== 'confirmed' || cell.review_status === 'pending' || cell.alternatives.length)) || []
-  return <div className="mapping-review"><section className="panel mapping-list"><div className="panel-heading"><strong>需要确认的映射</strong><span>{unresolved.length}</span></div>{unresolved.map((cell) => <div className="mapping-row" key={cell.cell_id}><div><strong>{cell.original_field || '原文候选'} <ArrowRight size={14} /> {cell.target_header}</strong><p>{cell.value} {cell.original_unit} · 目标单位 {cell.target_unit || '未指定'}</p></div><span className={`risk-tag ${cell.risk_level}`}>{cell.risk_level}</span><button onClick={async () => { await api.updateCell(projectId, cell.cell_id, { mapping_status: 'confirmed', review_status: 'confirmed' }); onRefresh() }}>确认</button></div>)}{!unresolved.length && <div className="empty-state"><Check size={32} /><h3>当前没有待确认映射</h3></div>}</section><aside className="panel mapping-help"><h3>确认原则</h3><p>单位不一致、化学形态换算和冲突值不会自动覆盖。确认后的字段会立即回写样品候选表，并进入后续人工审核与标准化流程。</p><button className="primary-button wide" onClick={() => onNavigate('/review')}>进入人工审核</button></aside></div>
+  const { articleId } = useAppStore()
+  const [activeCell, setActiveCell] = useState<CandidateCell | null>(null)
+  const [formula, setFormula] = useState('')
+  const [factor, setFactor] = useState('')
+  const [llmLoading, setLlmLoading] = useState(false)
+  const [llmSuggestion, setLlmSuggestion] = useState<{formula:string|null;factor:number;explanation:string}|null>(null)
+  const [selectedCells, setSelectedCells] = useState<Set<string>>(new Set())
+  const [targetHeaders, setTargetHeaders] = useState<{display_header:string;canonical_field:string;target_unit:string}[]>([])
+
+  // Load target headers from assigned config
+  const headersQuery = useQuery({ queryKey: ['headers', projectId], queryFn: () => api.headers(projectId), enabled: Boolean(projectId) })
+  const allHeaders = headersQuery.data || []
+  const currentConfig = allHeaders[0] // The assigned config
+  const configHeaders = currentConfig?.headers || []
+
+  const allCells = payload?.records.flatMap((record) => Object.values(record.cells)) || []
+  const unresolved = allCells.filter((cell) =>
+    cell.mapping_status !== 'confirmed' || cell.review_status === 'pending' || cell.alternatives.length
+  )
+
+  // Initialize all unresolved as selected
+  const initRef = { current: false }
+  if (!initRef.current && unresolved.length && selectedCells.size === 0) {
+    initRef.current = true
+    setTimeout(() => setSelectedCells(new Set(unresolved.map(c => c.cell_id))), 0)
+  }
+
+  const toggleCell = (cellId: string) => {
+    setSelectedCells(prev => { const next = new Set(prev); next.has(cellId) ? next.delete(cellId) : next.add(cellId); return next })
+  }
+  const toggleAll = () => {
+    if (selectedCells.size === unresolved.length) setSelectedCells(new Set())
+    else setSelectedCells(new Set(unresolved.map(c => c.cell_id)))
+  }
+
+  const selectCell = async (cell: CandidateCell) => {
+    setActiveCell(cell); setFormula(''); setFactor(''); setLlmSuggestion(null)
+    if (cell.original_unit && cell.target_unit && cell.original_unit !== cell.target_unit) {
+      setLlmLoading(true)
+      try {
+        const suggestion = await api.suggestConversion(projectId, cell.cell_id)
+        setLlmSuggestion(suggestion)
+        setFormula(suggestion.formula || '')
+        setFactor(String(suggestion.factor ?? ''))
+      } catch { setLlmSuggestion(null) }
+      setLlmLoading(false)
+    }
+  }
+
+  const doConfirm = async () => {
+    if (!activeCell) return
+    await api.confirmCell(projectId, activeCell.cell_id, {
+      target_field: activeCell.target_field,
+      target_unit: activeCell.target_unit,
+      formula: formula || undefined,
+      conversion_factor: factor ? parseFloat(factor) : undefined,
+      llm_suggestion: llmSuggestion,
+    })
+    setActiveCell(null); onRefresh()
+  }
+
+  const doBatchConfirm = async () => {
+    const items = unresolved.filter(c => selectedCells.has(c.cell_id)).map(cell => ({
+      cell_id: cell.cell_id,
+      target_field: cell.target_field,
+      target_unit: cell.target_unit,
+    }))
+    if (!items.length) return
+    await api.batchConfirmMappings(projectId, articleId, items)
+    setSelectedCells(new Set()); onRefresh()
+  }
+
+  return <div className="mapping-review">
+    <section className="panel mapping-list">
+      <div className="panel-heading"><strong>待确认映射</strong><span>{unresolved.length}</span></div>
+      <div className="mapping-toolbar">
+        <label><input type="checkbox" checked={selectedCells.size === unresolved.length && unresolved.length > 0} onChange={toggleAll} /> 全选</label>
+        <button className="primary-button" disabled={!selectedCells.size} onClick={doBatchConfirm}>确认选中 ({selectedCells.size})</button>
+      </div>
+      {unresolved.map((cell) => <div className={`mapping-row ${activeCell?.cell_id === cell.cell_id ? 'active' : ''}`} key={cell.cell_id}>
+        <input type="checkbox" checked={selectedCells.has(cell.cell_id)} onChange={() => toggleCell(cell.cell_id)} onClick={(e) => e.stopPropagation()} />
+        <div onClick={() => selectCell(cell)} style={{flex:1,cursor:'pointer'}}><strong>{cell.original_field || '原文候选'} <ArrowRight size={14} /> {cell.target_header}</strong>
+        <p>{cell.value} {cell.original_unit} · 目标单位 {cell.target_unit || '未指定'}</p>
+        {cell.mapping_status === 'auto_applied' && <span className="auto-badge">自动应用 · 人工确认</span>}</div>
+        <span className={`risk-tag ${cell.risk_level}`}>{cell.risk_level}</span>
+      </div>)}
+      {!unresolved.length && <div className="empty-state"><Check size={32} /><h3>当前没有待确认映射</h3></div>}
+    </section>
+    <aside className="panel mapping-detail">
+      <div className="panel-heading"><strong>映射确认</strong></div>
+      {activeCell ? <>
+        <h3>{activeCell.original_field} → {activeCell.target_header}</h3>
+        <dl><dt>当前值</dt><dd>{activeCell.value}</dd><dt>原始单位</dt><dd>{activeCell.original_unit}</dd><dt>目标单位</dt><dd>{activeCell.target_unit}</dd><dt>置信度</dt><dd>{Math.round(activeCell.confidence * 100)}%</dd></dl>
+        <label>目标字段<select value={activeCell.target_field} onChange={(e) => setActiveCell({...activeCell, target_field: e.target.value})}>
+          {configHeaders.map((h: Record<string, string>) => <option key={h.display_header || String(h)} value={h.display_header || String(h)}>{h.display_header || String(h)}</option>)}
+        </select></label>
+        {llmLoading && <p className="llm-hint">AI 正在分析换算关系...</p>}
+        {llmSuggestion && <div className="llm-suggestion"><strong>AI 建议</strong><p>{llmSuggestion.explanation}</p></div>}
+        <label>换算公式<textarea value={formula} onChange={(e) => setFormula(e.target.value)} rows={2} placeholder={llmSuggestion?.formula || '如 Na = Na2O × 0.741857'} /></label>
+        <label>转换因子<input value={factor} onChange={(e) => setFactor(e.target.value)} type="number" step="any" placeholder={llmSuggestion?.factor?.toString() || '1.0'} /></label>
+        <div className="mapping-actions">
+          <button className="primary-button" onClick={doConfirm}>确认此条</button>
+          <button onClick={() => setActiveCell(null)}>跳过</button>
+        </div>
+        <p className="rule-hint">如果你修改了 AI 建议的字段、单位或公式，修改内容将自动保存为映射规则。</p>
+      </> : <div className="empty-state compact">点击左侧映射查看详情，或直接批量确认选中项。</div>}
+      <button className="primary-button wide" style={{marginTop:16}} onClick={() => onNavigate('/review')}>进入人工审核</button>
+    </aside>
+  </div>
 }

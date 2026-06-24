@@ -404,6 +404,947 @@ class WorkbenchService:
         finally:
             db.close()
 
+    # ── Mapping confirmation with conditional rule persistence ──
+
+    def confirm_cell_mapping(
+        self, project_id: str, cell_id: str,
+        target_field: str | None = None,
+        target_unit: str | None = None,
+        formula: str | None = None,
+        conversion_factor: float | None = None,
+        llm_suggestion: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Confirm a candidate cell mapping. Only writes rules when user modifies LLM suggestion."""
+        db = self.pm.get_database(project_id)
+        try:
+            cell = db.fetch_one(
+                """SELECT c.*, r.article_id FROM candidate_cells c JOIN candidate_records r ON r.candidate_record_id = c.candidate_record_id
+                   JOIN extraction_batches b ON b.batch_id = r.batch_id WHERE b.project_id = ? AND c.cell_id = ?""",
+                (project_id, cell_id),
+            )
+            if not cell:
+                raise ValueError("Candidate cell not found")
+            cell = dict(cell)
+
+            # F1: Validate target_field against header config
+            if target_field:
+                headers = self.target_headers(project_id, cell["article_id"])
+                valid_fields = {h["display_header"] for h in headers} | {h["canonical_field"] for h in headers}
+                if target_field not in valid_fields:
+                    raise ValueError(f"目标字段 '{target_field}' 不在当前表头配置中")
+
+            # B3: Check for duplicate target_field in same record
+            if target_field:
+                conflict = db.fetch_one(
+                    "SELECT cell_id FROM candidate_cells WHERE candidate_record_id = ? AND target_header = ? AND cell_id != ?",
+                    (cell["candidate_record_id"], target_field, cell_id),
+                )
+                if conflict:
+                    raise ValueError(f"该记录中已有字段 '{target_field}'，不能重复映射")
+
+            now = datetime.now().isoformat()
+            sets = ["mapping_status = 'confirmed'", "review_status = 'confirmed'", "updated_at = ?"]
+            params: list[Any] = [now]
+            if target_field:
+                sets.append("target_field = ?")
+                params.append(target_field)
+                sets.append("target_header = ?")
+                params.append(target_field)
+            if target_unit:
+                sets.append("target_unit = ?")
+                params.append(target_unit)
+            params.append(cell_id)
+            db.execute(f"UPDATE candidate_cells SET {', '.join(sets)} WHERE cell_id = ?", tuple(params))
+            db.commit()
+
+            # Only write rules when user modified the LLM suggestion
+            user_modified = False
+            if llm_suggestion:
+                if target_field and target_field != llm_suggestion.get("target_field"):
+                    user_modified = True
+                if target_unit and target_unit != llm_suggestion.get("target_unit"):
+                    user_modified = True
+                if formula and formula != llm_suggestion.get("formula"):
+                    user_modified = True
+            elif target_field or target_unit or formula:
+                user_modified = True
+
+            if user_modified:
+                self._save_mapping_rule(db, project_id, cell, target_field, target_unit, formula, conversion_factor)
+
+            # Apply unit conversion if needed
+            if formula and conversion_factor:
+                self._apply_conversion(db, project_id, cell, formula, conversion_factor)
+
+            return dict(db.fetch_one("SELECT * FROM candidate_cells WHERE cell_id = ?", (cell_id,)))
+        finally:
+            db.close()
+
+    def _save_mapping_rule(
+        self, db, project_id: str, cell: dict[str, Any],
+        target_field: str | None, target_unit: str | None,
+        formula: str | None, conversion_factor: float | None,
+    ) -> str:
+        source_field = cell["original_field"] or cell["target_header"]
+        final_target = target_field or cell["target_field"]
+        final_unit = target_unit or cell["target_unit"]
+        mapping_type = "unit_conversion" if formula else "user_override"
+        now = datetime.now().isoformat()
+
+        # F3: Get config_id for this article
+        config_id = ""
+        article_id = cell.get("article_id", "")
+        if article_id:
+            assignment = db.fetch_one(
+                "SELECT config_id FROM article_header_assignments WHERE project_id = ? AND article_id = ? AND status = 'confirmed' ORDER BY created_at DESC LIMIT 1",
+                (project_id, article_id),
+            )
+            if assignment:
+                config_id = assignment["config_id"]
+
+        # B4: Check for existing rule with same source→target
+        existing = db.fetch_one(
+            "SELECT rule_id FROM mapping_rules WHERE source_field = ? AND target_field = ? AND (config_id = ? OR config_id = '')",
+            (source_field, final_target, config_id),
+        )
+        if existing:
+            db.execute(
+                "UPDATE mapping_rules SET target_unit = ?, mapping_type = ?, formula = ?, conversion_factor = ?, review_status = 'confirmed', created_by = 'user' WHERE rule_id = ?",
+                (final_unit, mapping_type, formula, conversion_factor, existing["rule_id"]),
+            )
+            db.commit()
+            self._write_rules_md(project_id)
+            return existing["rule_id"]
+
+        rule_id = self._next_id(db, "mapping_rules", "rule_id", "RULE", 6)
+        db.execute(
+            """INSERT INTO mapping_rules
+               (rule_id, source_field, target_field, source_unit, target_unit,
+                mapping_type, formula, conversion_factor, review_status, scope, version,
+                created_at, created_by)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', 'project', 1, ?, 'user')""",
+            (rule_id, source_field, final_target, cell["original_unit"], final_unit,
+             mapping_type, formula, conversion_factor, now),
+        )
+        db.commit()
+        self._write_rules_md(project_id)
+        return rule_id
+
+    def _write_rules_md(self, project_id: str) -> None:
+        """Write mapping_rules to memory/rules.md for agent reading."""
+        _config, project_dir = self.pm.load_project(project_id)
+        db = self.pm.get_database(project_id)
+        try:
+            rules = db.fetch_all("SELECT * FROM mapping_rules WHERE review_status = 'confirmed' ORDER BY created_at DESC")
+            lines = ["# Mapping Rules Memory", "", "Agent 抽取和资源发现时读取此文件作为上下文。", ""]
+            for rule in [dict(r) for r in rules]:
+                lines.extend([
+                    f"## {rule['rule_id']}",
+                    f"- 来源: {'用户修改' if rule.get('created_by') == 'user' else '系统内置'}",
+                    f"- 原始字段: {rule['source_field']}",
+                    f"- 目标字段: {rule['target_field']}",
+                    f"- 原始单位: {rule.get('source_unit') or '—'}",
+                    f"- 目标单位: {rule.get('target_unit') or '—'}",
+                    f"- 类型: {rule['mapping_type']}",
+                    f"- 公式: {rule.get('formula') or '—'}",
+                    f"- 因子: {rule.get('conversion_factor') or '—'}",
+                    f"- 创建: {rule['created_at']}",
+                    "",
+                ])
+            md_path = project_dir / "memory" / "rules.md"
+            md_path.parent.mkdir(parents=True, exist_ok=True)
+            md_path.write_text("\n".join(lines), encoding="utf-8")
+        finally:
+            db.close()
+
+    def _apply_conversion(
+        self, db, project_id: str, cell: dict[str, Any],
+        formula: str, factor: float,
+    ) -> None:
+        """Apply unit conversion and archive the calculation."""
+        try:
+            original_value = float(cell["original_value"])
+        except (ValueError, TypeError):
+            return
+        result = original_value * factor
+        now = datetime.now().isoformat()
+        calc_id = self._next_id(db, "calculation_records", "calc_id", "CALC", 7)
+        db.execute(
+            """INSERT INTO calculation_records
+               (calc_id, article_id, table_id, row_id, target_field, source_field,
+                source_value, source_unit, target_unit, formula, substitution, result,
+                review_status, candidate_record_id, cell_id, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?, ?)""",
+            (calc_id, cell.get("article_id", ""), "", cell.get("candidate_record_id", ""), cell["target_field"], cell["original_field"],
+             original_value, cell["original_unit"], cell["target_unit"], formula,
+             f"{original_value} × {factor}", result, cell.get("candidate_record_id"), cell.get("cell_id"), now),
+        )
+        db.execute(
+            "UPDATE candidate_cells SET value = ?, updated_at = ? WHERE cell_id = ?",
+            (f"{result:.6g}", now, cell["cell_id"]),
+        )
+        db.commit()
+
+    def _auto_apply_rules(self, db, project_id: str, cell: dict[str, Any]) -> bool:
+        """Check mapping_rules for auto-applicable rules. Returns True if a rule was applied."""
+        rules = db.fetch_all(
+            "SELECT * FROM mapping_rules WHERE review_status = 'confirmed' AND source_field = ?",
+            (cell["original_field"] or cell["target_header"],),
+        )
+        for rule_row in [dict(r) for r in rules]:
+            rule = rule_row
+            if rule.get("formula") and rule.get("conversion_factor"):
+                self._apply_conversion(db, project_id, cell, rule["formula"], float(rule["conversion_factor"]))
+            if rule["target_field"] != cell["target_field"]:
+                db.execute(
+                    "UPDATE candidate_cells SET target_field = ?, mapping_status = 'auto_applied', updated_at = ? WHERE cell_id = ?",
+                    (rule["target_field"], datetime.now().isoformat(), cell["cell_id"]),
+                )
+            db.execute(
+                "UPDATE candidate_cells SET mapping_status = 'auto_applied', review_status = 'confirmed', updated_at = ? WHERE cell_id = ?",
+                (datetime.now().isoformat(), cell["cell_id"]),
+            )
+            db.commit()
+            return True
+        return False
+
+    def suggest_conversion(self, project_id: str, cell_id: str) -> dict[str, Any]:
+        """Use LLM to suggest a unit conversion formula for a cell."""
+        db = self.pm.get_database(project_id)
+        try:
+            cell = db.fetch_one(
+                """SELECT c.* FROM candidate_cells c JOIN candidate_records r ON r.candidate_record_id = c.candidate_record_id
+                   JOIN extraction_batches b ON b.batch_id = r.batch_id WHERE b.project_id = ? AND c.cell_id = ?""",
+                (project_id, cell_id),
+            )
+            if not cell:
+                raise ValueError("Cell not found")
+            config = load_config()
+            client = LLMClient(config, db=db)
+            prompt = (
+                f"Geochemical unit conversion suggestion.\n"
+                f"Source field: {cell['original_field']} (unit: {cell['original_unit']})\n"
+                f"Target field: {cell['target_field']} (unit: {cell['target_unit']})\n"
+                f"Sample value: {cell['original_value']}\n\n"
+                f"Return JSON: {{\"formula\": \"Na = Na2O × 0.741857\", \"factor\": 0.741857, \"explanation\": \"...\"}}\n"
+                f"If no conversion is needed, return {{\"formula\": null, \"factor\": 1.0, \"explanation\": \"same unit\"}}"
+            )
+            response = client.chat(
+                [{"role": "system", "content": "You are a geochemistry unit conversion expert. Return only JSON."},
+                 {"role": "user", "content": prompt}],
+                task_name="unit_suggestion", project_id=project_id,
+                article_id=cell.get("article_id", ""),
+                agent_name="workbench", skill_name="unit_suggestion",
+                temperature_override=0.0, max_tokens_override=500, use_cache=True,
+            )
+            match = re.search(r"\{[\s\S]*\}", response.content or "")
+            if match:
+                return json.loads(match.group(0))
+            return {"formula": None, "factor": 1.0, "explanation": "Could not parse LLM response"}
+        finally:
+            db.close()
+
+    # ── Row-level review ──
+
+    def approve_record(self, project_id: str, record_id: str) -> dict[str, Any]:
+        db = self.pm.get_database(project_id)
+        try:
+            now = datetime.now().isoformat()
+            db.execute(
+                "UPDATE candidate_cells SET review_status = 'approved', updated_at = ? WHERE candidate_record_id = ? AND mapping_status = 'confirmed'",
+                (now, record_id),
+            )
+            db.execute(
+                "UPDATE candidate_records SET quality_grade = 'B', updated_at = ? WHERE candidate_record_id = ?",
+                (now, record_id),
+            )
+            db.commit()
+            return {"candidate_record_id": record_id, "status": "approved"}
+        finally:
+            db.close()
+
+    def reject_record(self, project_id: str, record_id: str) -> dict[str, Any]:
+        db = self.pm.get_database(project_id)
+        try:
+            now = datetime.now().isoformat()
+            db.execute(
+                "UPDATE candidate_cells SET review_status = 'rejected', updated_at = ? WHERE candidate_record_id = ?",
+                (now, record_id),
+            )
+            db.execute(
+                "UPDATE candidate_records SET quality_grade = 'E', updated_at = ? WHERE candidate_record_id = ?",
+                (now, record_id),
+            )
+            db.commit()
+            return {"candidate_record_id": record_id, "status": "rejected"}
+        finally:
+            db.close()
+
+    def batch_approve_records(self, project_id: str, record_ids: list[str]) -> dict[str, Any]:
+        for record_id in record_ids:
+            self.approve_record(project_id, record_id)
+        return {"approved": len(record_ids)}
+
+    def article_candidate_records(self, project_id: str, article_id: str) -> dict[str, Any]:
+        db = self.pm.get_database(project_id)
+        try:
+            headers = self.target_headers(project_id, article_id)
+            # B5: Only return records from the latest completed batch
+            latest_batch = db.fetch_one(
+                "SELECT batch_id FROM extraction_batches WHERE project_id = ? AND article_id = ? AND status = 'completed' ORDER BY created_at DESC LIMIT 1",
+                (project_id, article_id),
+            )
+            if not latest_batch:
+                return {"headers": headers, "records": []}
+            records = []
+            for row in db.fetch_all(
+                "SELECT * FROM candidate_records WHERE batch_id = ? ORDER BY row_index",
+                (latest_batch["batch_id"],),
+            ):
+                record = dict(row)
+                data = {h["display_header"]: "" for h in headers}
+                cells: dict[str, Any] = {}
+                for cell_row in db.fetch_all(
+                    "SELECT * FROM candidate_cells WHERE candidate_record_id = ?",
+                    (record["candidate_record_id"],),
+                ):
+                    cell = dict(cell_row)
+                    cell["bbox"] = json.loads(cell.pop("bbox_json") or "[]")
+                    cell["alternatives"] = json.loads(cell.pop("alternatives_json") or "[]")
+                    data[cell["target_header"]] = cell["value"]
+                    cells[cell["target_header"]] = cell
+                records.append({**record, "data": data, "cells": cells})
+            return {"headers": headers, "records": records}
+        finally:
+            db.close()
+
+    def batch_confirm_mappings(self, project_id: str, article_id: str, confirmations: list[dict[str, Any]]) -> dict[str, Any]:
+        """Batch confirm mappings. Only writes rules for user-modified items."""
+        results = []
+        errors = []
+        for item in confirmations:
+            try:
+                result = self.confirm_cell_mapping(
+                    project_id, item["cell_id"],
+                    target_field=item.get("target_field"),
+                    target_unit=item.get("target_unit"),
+                    formula=item.get("formula"),
+                    conversion_factor=item.get("conversion_factor"),
+                    llm_suggestion=item.get("llm_suggestion"),
+                )
+                results.append({"cell_id": item["cell_id"], "status": "confirmed"})
+            except Exception as e:
+                errors.append({"cell_id": item["cell_id"], "error": str(e)})
+        return {"confirmed": len(results), "errors": errors}
+
+    def delete_rule(self, project_id: str, rule_id: str, rule_type: str = "mapping") -> dict[str, Any]:
+        db = self.pm.get_database(project_id)
+        try:
+            table = "mapping_rules" if rule_type == "mapping" else "learned_extraction_rules"
+            db.execute(f"DELETE FROM {table} WHERE rule_id = ?", (rule_id,))
+            db.commit()
+            if rule_type == "mapping":
+                self._write_rules_md(project_id)
+            else:
+                self._write_extraction_rules_md(project_id)
+            return {"rule_id": rule_id, "status": "deleted"}
+        finally:
+            db.close()
+
+    # ── Manual OCR fill from PDF ──
+
+    def manual_fill(
+        self, project_id: str, article_id: str,
+        resource_id: str, page_number: int, bbox: list[float],
+        target_header: str, value: str, unit: str, explanation: str,
+    ) -> dict[str, Any]:
+        """User draws a box on PDF, OCR reads, fills into candidate table, and saves extraction rule."""
+        _config, project_dir = self.pm.load_project(project_id)
+        db = self.pm.get_database(project_id)
+        try:
+            # OCR the region
+            resource = db.fetch_one("SELECT * FROM resources WHERE resource_id = ?", (resource_id,))
+            if not resource:
+                raise ValueError("Resource not found")
+            pdf_path = Path(resource["local_path"] or "")
+            if not pdf_path.is_absolute():
+                pdf_path = project_dir / pdf_path
+            import fitz
+            with fitz.open(str(pdf_path)) as doc:
+                page = doc[int(page_number) - 1]
+                norm = self._clamp_bbox(bbox)
+                rect = fitz.Rect(
+                    page.rect.x0 + page.rect.width * norm[0],
+                    page.rect.y0 + page.rect.height * norm[1],
+                    page.rect.x0 + page.rect.width * norm[2],
+                    page.rect.y0 + page.rect.height * norm[3],
+                )
+                ocr_text = " ".join((page.get_text("text", clip=rect) or "").split())
+                preview = self._render_region(pdf_path, page_number - 1, tuple(rect), "manual")
+
+            # Find or create the candidate record for this article
+            session = self.ensure_session(project_id, article_id)
+            batch = db.fetch_one(
+                "SELECT batch_id FROM extraction_batches WHERE project_id = ? AND article_id = ? AND status = 'completed' ORDER BY created_at DESC LIMIT 1",
+                (project_id, article_id),
+            )
+            if not batch:
+                raise ValueError("No extraction batch found. Run extraction first.")
+
+            # Find the target header
+            headers = self.target_headers(project_id, article_id)
+            target = next((h for h in headers if h["display_header"] == target_header), None)
+            if not target:
+                raise ValueError(f"Target header '{target_header}' not found")
+
+            # Create or find a record (use a manual-fill specific sample key)
+            sample_key = f"manual:{page_number}:{target_header}"
+            record = db.fetch_one(
+                "SELECT * FROM candidate_records WHERE batch_id = ? AND sample_key = ?",
+                (batch["batch_id"], sample_key),
+            )
+            now = datetime.now().isoformat()
+            if record:
+                record_id = record["candidate_record_id"]
+            else:
+                record_id = self._next_id(db, "candidate_records", "candidate_record_id", "CREC", 7)
+                db.execute(
+                    """INSERT INTO candidate_records
+                       (candidate_record_id, batch_id, article_id, sample_key, sample_id, row_index,
+                        merge_status, quality_grade, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, 'manual_fill', 'C', ?, ?)""",
+                    (record_id, batch["batch_id"], article_id, sample_key, f"manual_{page_number}",
+                     self._next_row_index(db, batch["batch_id"]), now, now),
+                )
+
+            # Upsert cell
+            existing_cell = db.fetch_one(
+                "SELECT * FROM candidate_cells WHERE candidate_record_id = ? AND target_header = ?",
+                (record_id, target_header),
+            )
+            cell_id = existing_cell["cell_id"] if existing_cell else self._next_id(db, "candidate_cells", "cell_id", "CELL", 8)
+            if existing_cell:
+                db.execute(
+                    "UPDATE candidate_cells SET value = ?, original_value = ?, mapping_status = 'confirmed', review_status = 'approved', element_id = ?, page_number = ?, bbox_json = ?, updated_at = ? WHERE cell_id = ?",
+                    (value, value, None, page_number, json.dumps(norm), now, cell_id),
+                )
+            else:
+                db.execute(
+                    """INSERT INTO candidate_cells
+                       (cell_id, candidate_record_id, header_id, target_header, target_field, target_unit,
+                        value, original_value, original_field, original_unit, confidence, risk_level,
+                        mapping_status, element_id, page_number, bbox_json, alternatives_json,
+                        review_status, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?, ?, '[]', 'approved', ?, ?)""",
+                    (cell_id, record_id, target["header_id"], target_header, target["canonical_field"], unit,
+                     value, value, f"manual_p{page_number}", unit, 1.0, "low",
+                     None, page_number, json.dumps(norm), now, now),
+                )
+            db.commit()
+
+            # Save extraction rule if explanation provided
+            if explanation:
+                rule_id = self._next_id(db, "learned_extraction_rules", "rule_id", "ERULE", 6)
+                db.execute(
+                    """INSERT INTO learned_extraction_rules
+                       (rule_id, project_id, target_field, target_header, rule_type, pattern,
+                        confidence, risk_level, review_status, scope, created_at)
+                       VALUES (?, ?, ?, ?, 'extraction_hint', ?, 0.9, 'low', 'confirmed', 'project', ?)""",
+                    (rule_id, project_id, target["canonical_field"], target_header,
+                     json.dumps({"explanation": explanation, "ocr_text": ocr_text[:500], "page": page_number}, ensure_ascii=False),
+                     now),
+                )
+                db.commit()
+                self._write_extraction_rules_md(project_id)
+
+            return {"record_id": record_id, "cell_id": cell_id, "ocr_text": ocr_text, "value": value}
+        finally:
+            db.close()
+
+    def _write_extraction_rules_md(self, project_id: str) -> None:
+        """Write extraction rules to memory/extraction_rules.md for agent reading."""
+        _config, project_dir = self.pm.load_project(project_id)
+        db = self.pm.get_database(project_id)
+        try:
+            rules = db.fetch_all(
+                "SELECT * FROM learned_extraction_rules WHERE project_id = ? AND review_status = 'confirmed' ORDER BY created_at DESC",
+                (project_id,),
+            )
+            lines = ["# Extraction Rules Memory", "", "Agent 资源发现和抽取时读取此文件。", ""]
+            for rule in [dict(r) for r in rules]:
+                pattern = json.loads(rule.get("pattern") or "{}")
+                lines.extend([
+                    f"## {rule['rule_id']}",
+                    f"- 目标字段: {rule['target_header']} ({rule['target_field']})",
+                    f"- 类型: {rule['rule_type']}",
+                    f"- 说明: {pattern.get('explanation', '—')}",
+                    f"- 识别规则: {pattern.get('ocr_text', '—')[:100]}",
+                    f"- 创建: {rule['created_at']}",
+                    "",
+                ])
+            md_path = project_dir / "memory" / "extraction_rules.md"
+            md_path.parent.mkdir(parents=True, exist_ok=True)
+            md_path.write_text("\n".join(lines), encoding="utf-8")
+        finally:
+            db.close()
+
+    # ── Standardization & Trace ──
+
+    def finalize_standardized(self, project_id: str, article_id: str) -> dict[str, Any]:
+        """Generate standardized_records from approved candidate records."""
+        db = self.pm.get_database(project_id)
+        try:
+            headers = self.target_headers(project_id, article_id)
+            latest_batch = db.fetch_one(
+                """SELECT batch_id FROM extraction_batches
+                   WHERE project_id = ? AND article_id = ? AND status = 'completed'
+                   ORDER BY created_at DESC LIMIT 1""",
+                (project_id, article_id),
+            )
+            if not latest_batch:
+                return {"article_id": article_id, "records": 0}
+            approved_records = db.fetch_all(
+                """SELECT * FROM candidate_records
+                   WHERE batch_id = ? AND quality_grade != 'E' ORDER BY row_index""",
+                (latest_batch["batch_id"],),
+            )
+            now = datetime.now().isoformat()
+            count = 0
+            for rec_row in approved_records:
+                rec = dict(rec_row)
+                cells = db.fetch_all(
+                    "SELECT * FROM candidate_cells WHERE candidate_record_id = ? AND review_status != 'rejected'",
+                    (rec["candidate_record_id"],),
+                )
+                # F5: Initialize data with ALL headers from config, then fill from cells
+                data: dict[str, str] = {h["display_header"]: "" for h in headers}
+                original_fields: dict[str, str] = {h["display_header"]: "" for h in headers}
+                original_values: dict[str, str] = {h["display_header"]: "" for h in headers}
+                confidences: dict[str, float] = {h["display_header"]: 0.0 for h in headers}
+                review_statuses: dict[str, str] = {h["display_header"]: "missing" for h in headers}
+                quality = "A"
+                for cell_row in [dict(c) for c in cells]:
+                    header = cell_row["target_header"]
+                    data[header] = cell_row["value"]
+                    original_fields[header] = cell_row["original_field"]
+                    original_values[header] = cell_row["original_value"]
+                    confidences[header] = cell_row["confidence"]
+                    review_statuses[header] = cell_row["review_status"]
+                    if cell_row["mapping_status"] == "auto_applied":
+                        quality = "B" if quality == "A" else quality
+                    elif cell_row.get("formula"):
+                        quality = "C"
+
+                record_id = self._next_id(db, "standardized_records", "record_id", "STD", 7)
+                # Find source info from first cell
+                first_cell = dict(cells[0]) if cells else {}
+                db.execute(
+                    """INSERT INTO standardized_records
+                       (record_id, article_id, table_id, row_id, data, source_file, source_table,
+                        source_row, original_fields, original_units, original_values, mapped_fields,
+                        mapped_units, mapping_rule_ids, calculation_ids, review_statuses,
+                        confidence_scores, quality_grade, processed_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', '[]', ?, ?, ?, ?)""",
+                    (record_id, article_id, "", rec["candidate_record_id"],
+                     json.dumps(data, ensure_ascii=False),
+                     "", "", rec.get("row_index"),
+                     json.dumps(original_fields, ensure_ascii=False),
+                     json.dumps({h: "" for h in data}, ensure_ascii=False),
+                     json.dumps(original_values, ensure_ascii=False),
+                     json.dumps({h: h for h in data}, ensure_ascii=False),
+                     json.dumps({h: "" for h in data}, ensure_ascii=False),
+                     json.dumps(review_statuses, ensure_ascii=False),
+                     json.dumps(confidences, ensure_ascii=False),
+                     quality, now),
+                )
+                self._snapshot_standardized_provenance(
+                    db, record_id, rec, [dict(cell) for cell in cells], now,
+                )
+                count += 1
+            db.commit()
+            return {"article_id": article_id, "records": count}
+        finally:
+            db.close()
+
+    def _snapshot_standardized_provenance(
+        self,
+        db,
+        record_id: str,
+        candidate_record: dict[str, Any],
+        cells: list[dict[str, Any]],
+        created_at: str,
+    ) -> None:
+        """Freeze cell-level source details when a standardized row is created."""
+        for cell in cells:
+            if cell.get("value") in (None, ""):
+                continue
+            element = None
+            resource = None
+            if cell.get("element_id"):
+                element = db.fetch_one(
+                    """SELECT element_id, resource_id, element_type, page_number, bbox_json,
+                              caption, context_text
+                       FROM document_elements WHERE element_id = ?""",
+                    (cell["element_id"],),
+                )
+            if element and element["resource_id"]:
+                resource = db.fetch_one(
+                    "SELECT resource_id, file_name FROM resources WHERE resource_id = ?",
+                    (element["resource_id"],),
+                )
+            calculation = db.fetch_one(
+                """SELECT calc_id, formula, substitution FROM calculation_records
+                   WHERE cell_id = ? OR (cell_id IS NULL AND candidate_record_id = ? AND target_field = ?)
+                   ORDER BY created_at DESC LIMIT 1""",
+                (cell["cell_id"], candidate_record["candidate_record_id"], cell.get("target_field", "")),
+            )
+            provenance_id = self._next_id(
+                db, "standardized_cell_provenance", "provenance_id", "PROV", 8,
+            )
+            bbox_json = (
+                element["bbox_json"] if element and element["bbox_json"]
+                else cell.get("bbox_json") or "[]"
+            )
+            source_complete = int(bool(element and element["page_number"] and bbox_json != "[]"))
+            db.execute(
+                """INSERT INTO standardized_cell_provenance
+                   (provenance_id, record_id, target_header, standardized_value, target_unit,
+                    original_field, original_value, original_unit, resource_id, resource_name,
+                    element_id, element_type, page_number, bbox_json, source_caption,
+                    source_context, mapping_status, mapping_rule_id, calculation_id,
+                    calculation_formula, calculation_substitution, review_status, confidence,
+                    source_complete, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    provenance_id, record_id, cell["target_header"], str(cell["value"]),
+                    cell.get("target_unit") or "", cell.get("original_field") or "",
+                    cell.get("original_value") or "", cell.get("original_unit") or "",
+                    resource["resource_id"] if resource else None,
+                    resource["file_name"] if resource else "",
+                    element["element_id"] if element else cell.get("element_id"),
+                    element["element_type"] if element else "",
+                    element["page_number"] if element else cell.get("page_number"), bbox_json,
+                    element["caption"] if element else "",
+                    element["context_text"] if element else "",
+                    cell.get("mapping_status") or "", cell.get("mapping_id"),
+                    calculation["calc_id"] if calculation else None,
+                    calculation["formula"] if calculation else "",
+                    calculation["substitution"] if calculation else "",
+                    cell.get("review_status") or "", float(cell.get("confidence") or 0),
+                    source_complete, created_at,
+                ),
+            )
+
+    def article_trace(self, project_id: str, article_id: str) -> list[dict[str, Any]]:
+        """Return trace data for all approved cells in an article."""
+        db = self.pm.get_database(project_id)
+        try:
+            records = []
+            for rec_row in db.fetch_all(
+                "SELECT * FROM standardized_records WHERE article_id = ? ORDER BY processed_at DESC",
+                (article_id,),
+            ):
+                rec = dict(rec_row)
+                rec["data"] = json.loads(rec.get("data") or "{}")
+                rec["original_fields"] = json.loads(rec.get("original_fields") or "{}")
+                rec["original_values"] = json.loads(rec.get("original_values") or "{}")
+                rec["review_statuses"] = json.loads(rec.get("review_statuses") or "{}")
+                rec["confidence_scores"] = json.loads(rec.get("confidence_scores") or "{}")
+                # Find source element info
+                source_cell = db.fetch_one(
+                    "SELECT element_id, page_number, bbox_json FROM candidate_cells WHERE candidate_record_id = ? AND element_id IS NOT NULL LIMIT 1",
+                    (rec.get("row_id", ""),),
+                )
+                if source_cell:
+                    rec["source_page"] = source_cell["page_number"]
+                    rec["source_bbox"] = json.loads(source_cell["bbox_json"] or "[]")
+                    rec["source_element_id"] = source_cell["element_id"]
+                    element = db.fetch_one(
+                        "SELECT preview_path FROM document_elements WHERE element_id = ?",
+                        (source_cell["element_id"],),
+                    )
+                    rec["source_preview"] = element["preview_path"] if element else ""
+                records.append(rec)
+            return records
+        finally:
+            db.close()
+
+    def trace_records(
+        self,
+        project_id: str,
+        article_id: str | None = None,
+        query: str = "",
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """Return latest standardized rows across the workspace with source summaries."""
+        db = self.pm.get_database(project_id)
+        try:
+            params: list[Any] = [project_id]
+            article_clause = ""
+            if article_id:
+                article_clause = " AND s.article_id = ?"
+                params.append(article_id)
+            rows = db.fetch_all(
+                f"""SELECT s.*, a.title AS article_title, a.doi,
+                           cr.sample_id AS candidate_sample_id
+                    FROM standardized_records s
+                    JOIN articles a ON a.article_id = s.article_id
+                    LEFT JOIN candidate_records cr ON cr.candidate_record_id = s.row_id
+                    WHERE a.project_id = ?{article_clause}
+                    ORDER BY s.processed_at DESC, s.record_id DESC""",
+                tuple(params),
+            )
+            latest: list[dict[str, Any]] = []
+            seen: set[tuple[str, str]] = set()
+            needle = query.strip().lower()
+            for row in rows:
+                record = dict(row)
+                key = (record["article_id"], record["row_id"])
+                if key in seen:
+                    continue
+                seen.add(key)
+                data = json.loads(record.get("data") or "{}")
+                sample_id = record.get("candidate_sample_id") or self._sample_from_data(data)
+                searchable = " ".join([
+                    record.get("record_id") or "", record.get("article_title") or "",
+                    record.get("doi") or "", sample_id,
+                    " ".join(f"{field} {value}" for field, value in data.items() if value not in (None, "")),
+                ]).lower()
+                if needle and needle not in searchable:
+                    continue
+                sources = self._trace_source_summaries(db, record["record_id"], record["row_id"])
+                latest.append({
+                    "record_id": record["record_id"],
+                    "article_id": record["article_id"],
+                    "article_title": record.get("article_title") or record["article_id"],
+                    "doi": record.get("doi") or "",
+                    "sample_id": sample_id,
+                    "processed_at": record["processed_at"],
+                    "nonempty_count": sum(value not in (None, "") for value in data.values()),
+                    "sources": sources,
+                    "source_complete": bool(sources) and all(source["source_complete"] for source in sources),
+                })
+            total = len(latest)
+            return {"items": latest[offset:offset + limit], "total": total, "limit": limit, "offset": offset}
+        finally:
+            db.close()
+
+    def trace_record_detail(self, project_id: str, record_id: str) -> dict[str, Any]:
+        """Return a standardized row and field-level source, mapping and calculation details."""
+        db = self.pm.get_database(project_id)
+        try:
+            row = db.fetch_one(
+                """SELECT s.*, a.project_id, a.title AS article_title, a.doi,
+                          cr.sample_id AS candidate_sample_id
+                   FROM standardized_records s
+                   JOIN articles a ON a.article_id = s.article_id
+                   LEFT JOIN candidate_records cr ON cr.candidate_record_id = s.row_id
+                   WHERE a.project_id = ? AND s.record_id = ?""",
+                (project_id, record_id),
+            )
+            if not row:
+                raise ValueError("Trace record not found")
+            record = dict(row)
+            data = json.loads(record.get("data") or "{}")
+            original_fields = json.loads(record.get("original_fields") or "{}")
+            original_units = json.loads(record.get("original_units") or "{}")
+            original_values = json.loads(record.get("original_values") or "{}")
+            mapped_units = json.loads(record.get("mapped_units") or "{}")
+            review_statuses = json.loads(record.get("review_statuses") or "{}")
+            confidences = json.loads(record.get("confidence_scores") or "{}")
+            snapshots = {
+                item["target_header"]: dict(item)
+                for item in db.fetch_all(
+                    "SELECT * FROM standardized_cell_provenance WHERE record_id = ?",
+                    (record_id,),
+                )
+            }
+            fallback = {
+                item["target_header"]: dict(item)
+                for item in db.fetch_all(
+                    """SELECT c.*, e.resource_id, e.element_type,
+                              COALESCE(e.page_number, c.page_number) AS source_page_number,
+                              COALESCE(e.bbox_json, c.bbox_json) AS source_bbox_json,
+                              e.caption AS source_caption, e.context_text AS source_context,
+                              r.file_name AS resource_name
+                       FROM candidate_cells c
+                       LEFT JOIN document_elements e ON e.element_id = c.element_id
+                       LEFT JOIN resources r ON r.resource_id = e.resource_id
+                       WHERE c.candidate_record_id = ?""",
+                    (record["row_id"],),
+                )
+            }
+            fields = []
+            for target_header, value in data.items():
+                if value in (None, ""):
+                    continue
+                snapshot = snapshots.get(target_header)
+                old_cell = fallback.get(target_header)
+                source = self._trace_field_source(snapshot, old_cell)
+                mapping_rule_id = (snapshot or {}).get("mapping_rule_id") or (old_cell or {}).get("mapping_id")
+                mapping_rule = db.fetch_one(
+                    "SELECT rule_id, mapping_type, formula FROM mapping_rules WHERE rule_id = ?",
+                    (mapping_rule_id,),
+                ) if mapping_rule_id else None
+                calculation_id = (snapshot or {}).get("calculation_id")
+                calculation = db.fetch_one(
+                    """SELECT calc_id, formula, substitution, result, source_unit, target_unit
+                       FROM calculation_records WHERE calc_id = ?""",
+                    (calculation_id,),
+                ) if calculation_id else None
+                if not calculation and old_cell:
+                    calculation = db.fetch_one(
+                        """SELECT calc_id, formula, substitution, result, source_unit, target_unit
+                           FROM calculation_records WHERE cell_id = ? ORDER BY created_at DESC LIMIT 1""",
+                        (old_cell["cell_id"],),
+                    )
+                fields.append({
+                    "target_header": target_header,
+                    "value": str(value),
+                    "target_unit": (snapshot or {}).get("target_unit") or (old_cell or {}).get("target_unit") or mapped_units.get(target_header, ""),
+                    "original_field": (snapshot or {}).get("original_field") or (old_cell or {}).get("original_field") or original_fields.get(target_header, ""),
+                    "original_value": (snapshot or {}).get("original_value") or (old_cell or {}).get("original_value") or original_values.get(target_header, ""),
+                    "original_unit": (snapshot or {}).get("original_unit") or (old_cell or {}).get("original_unit") or original_units.get(target_header, ""),
+                    "review_status": (snapshot or {}).get("review_status") or (old_cell or {}).get("review_status") or review_statuses.get(target_header, ""),
+                    "confidence": float((snapshot or {}).get("confidence") or (old_cell or {}).get("confidence") or confidences.get(target_header, 0)),
+                    "mapping": dict(mapping_rule) if mapping_rule else {
+                        "rule_id": mapping_rule_id,
+                        "mapping_type": (snapshot or {}).get("mapping_status") or (old_cell or {}).get("mapping_status") or "",
+                        "formula": "",
+                    },
+                    "calculation": dict(calculation) if calculation else None,
+                    "source": source,
+                    "source_complete": bool(source and source.get("page_number") and source.get("bbox")),
+                })
+            resources = [
+                dict(item) for item in db.fetch_all(
+                    """SELECT resource_id, resource_type, file_name, status
+                       FROM resources WHERE article_id = ? AND resource_type LIKE '%pdf%'
+                       ORDER BY created_at""",
+                    (record["article_id"],),
+                )
+            ]
+            return {
+                "record_id": record_id,
+                "article_id": record["article_id"],
+                "article_title": record.get("article_title") or record["article_id"],
+                "doi": record.get("doi") or "",
+                "sample_id": record.get("candidate_sample_id") or self._sample_from_data(data),
+                "processed_at": record["processed_at"],
+                "fields": fields,
+                "sources": self._trace_source_summaries(db, record_id, record["row_id"]),
+                "resources": resources,
+            }
+        finally:
+            db.close()
+
+    def _sample_from_data(self, data: dict[str, Any]) -> str:
+        for field, value in data.items():
+            if re.search(r"sample\s*[_-]?\s*(?:id|name)|样品", field, re.I):
+                return str(value or "")
+        return ""
+
+    def _trace_source_summaries(self, db, record_id: str, candidate_record_id: str) -> list[dict[str, Any]]:
+        rows = [dict(item) for item in db.fetch_all(
+            """SELECT resource_id, resource_name, element_id, element_type, page_number,
+                      bbox_json, source_complete, target_header
+               FROM standardized_cell_provenance WHERE record_id = ? ORDER BY page_number""",
+            (record_id,),
+        )]
+        if not rows:
+            rows = [dict(item) for item in db.fetch_all(
+                """SELECT e.resource_id, r.file_name AS resource_name, e.element_id,
+                          e.element_type, COALESCE(e.page_number, c.page_number) AS page_number,
+                          COALESCE(e.bbox_json, c.bbox_json) AS bbox_json,
+                          CASE WHEN e.element_id IS NULL THEN 0 ELSE 1 END AS source_complete,
+                          c.target_header
+                   FROM candidate_cells c
+                   LEFT JOIN document_elements e ON e.element_id = c.element_id
+                   LEFT JOIN resources r ON r.resource_id = e.resource_id
+                   WHERE c.candidate_record_id = ? AND c.value != '' ORDER BY page_number""",
+                (candidate_record_id,),
+            )]
+        grouped: dict[str, dict[str, Any]] = {}
+        for item in rows:
+            key = item.get("element_id") or f"missing:{item.get('page_number')}"
+            if key not in grouped:
+                grouped[key] = {
+                    "resource_id": item.get("resource_id"),
+                    "resource_name": item.get("resource_name") or "",
+                    "element_id": item.get("element_id"),
+                    "element_type": item.get("element_type") or "paragraph",
+                    "page_number": item.get("page_number"),
+                    "bbox": json.loads(item.get("bbox_json") or "[]"),
+                    "target_headers": [],
+                    "source_complete": bool(item.get("source_complete")),
+                }
+            grouped[key]["target_headers"].append(item.get("target_header") or "")
+        return list(grouped.values())
+
+    def _trace_field_source(
+        self,
+        snapshot: dict[str, Any] | None,
+        fallback: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        item = snapshot or fallback
+        if not item:
+            return None
+        bbox_json = (
+            item.get("bbox_json") if snapshot else item.get("source_bbox_json")
+        ) or "[]"
+        return {
+            "resource_id": item.get("resource_id"),
+            "resource_name": item.get("resource_name") or "",
+            "element_id": item.get("element_id"),
+            "element_type": item.get("element_type") or "paragraph",
+            "page_number": item.get("page_number") if snapshot else item.get("source_page_number"),
+            "bbox": json.loads(bbox_json),
+            "caption": item.get("source_caption") or "",
+            "context": item.get("source_context") or "",
+        }
+
+    def export_article(self, project_id: str, article_id: str, format: str = "csv") -> dict[str, Any]:
+        """Export standardized records for an article."""
+        _config, project_dir = self.pm.load_project(project_id)
+        db = self.pm.get_database(project_id)
+        try:
+            headers = self.target_headers(project_id, article_id)
+            records = db.fetch_all(
+                "SELECT * FROM standardized_records WHERE article_id = ? ORDER BY processed_at",
+                (article_id,),
+            )
+            if not records:
+                raise ValueError("No standardized records. Run finalize first.")
+            out_dir = project_dir / "output"
+            out_dir.mkdir(parents=True, exist_ok=True)
+
+            rows = []
+            for rec in [dict(r) for r in records]:
+                data = json.loads(rec.get("data") or "{}")
+                row = {h["display_header"]: data.get(h["display_header"], "") for h in headers}
+                row["Quality_Grade"] = rec["quality_grade"]
+                row["Record_ID"] = rec["record_id"]
+                rows.append(row)
+
+            if format == "csv":
+                import csv
+                path = out_dir / f"standardized_{article_id}.csv"
+                with open(path, "w", newline="", encoding="utf-8-sig") as f:
+                    writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+                    writer.writeheader()
+                    writer.writerows(rows)
+            elif format == "xlsx":
+                import pandas as pd
+                path = out_dir / f"standardized_{article_id}.xlsx"
+                pd.DataFrame(rows).to_excel(path, index=False)
+            else:
+                raise ValueError(f"Unsupported format: {format}")
+
+            return {"path": str(path), "records": len(rows), "format": format}
+        finally:
+            db.close()
+
     def create_extraction_batch(
         self,
         project_id: str,
@@ -682,6 +1623,11 @@ class WorkbenchService:
                     "confirmed" if deterministic_match else "pending", now, now,
                 ),
             )
+            # Auto-apply existing rules for non-deterministic cells
+            if not deterministic_match:
+                new_cell = db.fetch_one("SELECT * FROM candidate_cells WHERE cell_id = ?", (cell_id,))
+                if new_cell:
+                    self._auto_apply_rules(db, project_id, dict(new_cell))
         db.commit()
 
     def _table_regions(self, blocks: list[tuple], page_rect) -> list[dict[str, Any]]:

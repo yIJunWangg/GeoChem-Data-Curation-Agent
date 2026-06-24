@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
+import { NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
   BarChart3, BookOpen, Bot, Database, FileInput, FileSpreadsheet, Gauge,
@@ -8,7 +8,9 @@ import {
 import { api } from './api'
 import { useAppStore } from './store'
 import WorkbenchPage from './WorkbenchPage'
-import { CostPage, DashboardPage, HeaderPage, ImportPage, ReviewPage, RulesPage, SettingsPage, StandardizedPage, TracePage } from './Pages'
+import { CostPage, DashboardPage, HeaderPage, ImportPage, RulesPage, SettingsPage, StandardizedPage } from './Pages'
+import { ReviewPage } from './ReviewPage'
+import { TracePage } from './TracePage'
 
 const NAV = [
   ['/', '项目总览', Gauge],
@@ -25,6 +27,7 @@ const NAV = [
 
 export default function App() {
   const { projectId, setProjectId } = useAppStore()
+  const navigate = useNavigate()
   const workspace = useQuery({ queryKey: ['workspace'], queryFn: api.workspace })
   const articles = useQuery({ queryKey: ['articles', projectId], queryFn: () => api.articles(projectId), enabled: Boolean(projectId) })
   const { articleId, setArticleId } = useAppStore()
@@ -58,7 +61,7 @@ export default function App() {
               {!articles.data?.length && <option value="">暂无文献</option>}
               {articles.data?.map((article) => <option key={article.article_id} value={article.article_id}>{article.title || article.doi || article.article_id}</option>)}
             </select>
-            <button className="primary-button"><Bot size={17} /> 新建任务</button>
+            <button className="primary-button" onClick={() => navigate('/import')}><Bot size={17} /> 新建任务</button>
           </div>
         </header>
         <main className="page-viewport">

@@ -246,6 +246,8 @@ CREATE TABLE IF NOT EXISTS calculation_records (
     rule_id            TEXT,
     review_status      TEXT DEFAULT 'confirmed',
     archive_file       TEXT,
+    candidate_record_id TEXT,
+    cell_id             TEXT,
     created_at         TEXT NOT NULL,
     FOREIGN KEY (article_id) REFERENCES articles(article_id)
 );
@@ -273,6 +275,38 @@ CREATE TABLE IF NOT EXISTS standardized_records (
     quality_grade    TEXT DEFAULT 'D',
     processed_at     TEXT NOT NULL,
     FOREIGN KEY (article_id) REFERENCES articles(article_id)
+);
+
+CREATE TABLE IF NOT EXISTS standardized_cell_provenance (
+    provenance_id      TEXT PRIMARY KEY,
+    record_id          TEXT NOT NULL,
+    target_header      TEXT NOT NULL,
+    standardized_value TEXT DEFAULT '',
+    target_unit        TEXT DEFAULT '',
+    original_field     TEXT DEFAULT '',
+    original_value     TEXT DEFAULT '',
+    original_unit      TEXT DEFAULT '',
+    resource_id        TEXT,
+    resource_name      TEXT DEFAULT '',
+    element_id         TEXT,
+    element_type       TEXT DEFAULT '',
+    page_number        INTEGER,
+    bbox_json          TEXT DEFAULT '[]',
+    source_caption     TEXT DEFAULT '',
+    source_context     TEXT DEFAULT '',
+    mapping_status     TEXT DEFAULT '',
+    mapping_rule_id    TEXT,
+    calculation_id     TEXT,
+    calculation_formula TEXT DEFAULT '',
+    calculation_substitution TEXT DEFAULT '',
+    review_status      TEXT DEFAULT '',
+    confidence         REAL DEFAULT 0.0,
+    source_complete    INTEGER DEFAULT 0,
+    created_at         TEXT NOT NULL,
+    UNIQUE(record_id, target_header),
+    FOREIGN KEY (record_id) REFERENCES standardized_records(record_id),
+    FOREIGN KEY (resource_id) REFERENCES resources(resource_id),
+    FOREIGN KEY (element_id) REFERENCES document_elements(element_id)
 );
 
 CREATE TABLE IF NOT EXISTS export_jobs (
@@ -569,6 +603,8 @@ CREATE INDEX IF NOT EXISTS idx_review_items_article ON review_items(article_id);
 CREATE INDEX IF NOT EXISTS idx_review_items_status ON review_items(status);
 CREATE INDEX IF NOT EXISTS idx_calculation_records_article ON calculation_records(article_id);
 CREATE INDEX IF NOT EXISTS idx_standardized_records_article ON standardized_records(article_id);
+CREATE INDEX IF NOT EXISTS idx_standardized_provenance_record ON standardized_cell_provenance(record_id);
+CREATE INDEX IF NOT EXISTS idx_standardized_provenance_element ON standardized_cell_provenance(element_id);
 CREATE INDEX IF NOT EXISTS idx_llm_calls_project ON llm_calls(project_id);
 CREATE INDEX IF NOT EXISTS idx_llm_calls_article ON llm_calls(article_id);
 CREATE INDEX IF NOT EXISTS idx_processing_events_project ON processing_events(project_id);
@@ -626,12 +662,22 @@ class Database:
         self._ensure_table_columns(conn, "articles", {
             "article_dir": "TEXT DEFAULT ''",
         })
+        self._ensure_table_columns(conn, "calculation_records", {
+            "candidate_record_id": "TEXT",
+            "cell_id": "TEXT",
+        })
 
     def _ensure_table_columns(self, conn: sqlite3.Connection, table: str, additions: dict[str, str]) -> None:
         existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
         for column, decl in additions.items():
             if column not in existing:
-                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+                try:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+                except sqlite3.OperationalError as exc:
+                    # Multiple initial API requests can initialize the same legacy DB
+                    # concurrently. A competing connection may add the column first.
+                    if "duplicate column name" not in str(exc).lower():
+                        raise
 
     def execute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
         conn = self.connect()

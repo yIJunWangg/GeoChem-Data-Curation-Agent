@@ -98,3 +98,54 @@ export type WorkflowEvent = {
   details: Record<string, unknown>
 }
 
+export type EvidenceSource = {
+  resource_id?: string
+  resource_name?: string
+  element_id?: string
+  element_type?: 'table' | 'figure' | 'paragraph' | string
+  page_number?: number
+  bbox: number[]
+  caption?: string
+  context?: string
+  target_headers?: string[]
+  source_complete?: boolean
+}
+
+export type TraceRecordSummary = {
+  record_id: string
+  article_id: string
+  article_title: string
+  doi: string
+  sample_id: string
+  processed_at: string
+  nonempty_count: number
+  sources: EvidenceSource[]
+  source_complete: boolean
+}
+
+export type TraceField = {
+  target_header: string
+  value: string
+  target_unit: string
+  original_field: string
+  original_value: string
+  original_unit: string
+  review_status: string
+  confidence: number
+  mapping: { rule_id?: string; mapping_type?: string; formula?: string }
+  calculation?: { calc_id?: string; formula?: string; substitution?: string; result?: number; source_unit?: string; target_unit?: string } | null
+  source?: EvidenceSource | null
+  source_complete: boolean
+}
+
+export type TraceRecordDetail = {
+  record_id: string
+  article_id: string
+  article_title: string
+  doi: string
+  sample_id: string
+  processed_at: string
+  fields: TraceField[]
+  sources: EvidenceSource[]
+  resources: Resource[]
+}

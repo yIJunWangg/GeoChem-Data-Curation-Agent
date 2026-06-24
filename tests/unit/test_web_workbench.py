@@ -76,6 +76,7 @@ def test_new_workbench_schema_is_initialized(tmp_path):
     assert {
         "document_elements", "workbench_sessions", "element_selections",
         "extraction_batches", "candidate_records", "candidate_cells", "workflow_tasks",
+        "standardized_cell_provenance",
     }.issubset(tables)
 
 
@@ -237,3 +238,61 @@ def test_rediscovery_preserves_referenced_elements_without_fk_failure(tmp_path):
 
     assert result["table"] >= 2
     assert any(item["element_id"] == table["element_id"] and item["selected"] for item in refreshed)
+
+
+def test_finalize_snapshots_cell_sources_and_trace_search(tmp_path):
+    pm, _headers = _workspace(tmp_path)
+    service = WorkbenchService(pm)
+    service.discover_article("WEB_TEST", "ART_WEB")
+    tables = [
+        item for item in service.list_elements("WEB_TEST", "ART_WEB")
+        if item["element_type"] == "table" and item["page_number"] in {5, 6}
+    ]
+    service.set_selections("WEB_TEST", "ART_WEB", [item["element_id"] for item in tables])
+    service.create_extraction_batch("WEB_TEST", "ART_WEB", use_llm=False)
+
+    finalized = service.finalize_standardized("WEB_TEST", "ART_WEB")
+    summaries = service.trace_records("WEB_TEST", query="c1-01")
+    detail = service.trace_record_detail("WEB_TEST", summaries["items"][0]["record_id"])
+    toc = next(field for field in detail["fields"] if field["target_header"] == "TOC %")
+    thorium = next(field for field in detail["fields"] if field["target_header"] == "Th ppm")
+
+    assert finalized["records"] == 47
+    assert summaries["total"] == 1
+    assert summaries["items"][0]["sample_id"] == "c1-01"
+    assert {source["page_number"] for source in summaries["items"][0]["sources"]} == {5, 6}
+    assert toc["source"]["page_number"] == 5
+    assert thorium["source"]["page_number"] == 6
+    assert toc["source_complete"] is True
+    assert thorium["source"]["resource_id"] == "RES_WEB"
+
+
+def test_trace_api_defaults_to_all_articles_and_deduplicates_finalize_runs(tmp_path):
+    pm, _headers = _workspace(tmp_path)
+    service = WorkbenchService(pm)
+    service.discover_article("WEB_TEST", "ART_WEB")
+    tables = [
+        item for item in service.list_elements("WEB_TEST", "ART_WEB")
+        if item["element_type"] == "table" and item["page_number"] in {5, 6}
+    ]
+    service.set_selections("WEB_TEST", "ART_WEB", [item["element_id"] for item in tables])
+    service.create_extraction_batch("WEB_TEST", "ART_WEB", use_llm=False)
+    service.finalize_standardized("WEB_TEST", "ART_WEB")
+    service.finalize_standardized("WEB_TEST", "ART_WEB")
+    client = TestClient(create_app(pm))
+
+    response = client.get("/api/v1/trace-records", params={"project_id": "WEB_TEST"})
+    filtered = client.get(
+        "/api/v1/trace-records",
+        params={"project_id": "WEB_TEST", "article_id": "ART_WEB", "q": "Th ppm"},
+    )
+    record_id = response.json()["items"][0]["record_id"]
+    detail = client.get(
+        f"/api/v1/trace-records/{record_id}", params={"project_id": "WEB_TEST"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 47
+    assert filtered.json()["total"] == 46
+    assert detail.status_code == 200
+    assert detail.json()["resources"][0]["resource_id"] == "RES_WEB"

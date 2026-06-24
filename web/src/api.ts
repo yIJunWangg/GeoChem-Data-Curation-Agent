@@ -1,4 +1,4 @@
-import type { Article, BatchPayload, DocumentElement, HeaderConfig, Resource, WorkflowEvent, Workspace } from './types'
+import type { Article, BatchPayload, DocumentElement, HeaderConfig, Resource, TraceRecordDetail, TraceRecordSummary, WorkflowEvent, Workspace } from './types'
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' }
 
@@ -54,6 +54,37 @@ export const api = {
     request<DocumentElement>(`/api/v1/elements/${elementId}?project_id=${encodeURIComponent(projectId)}`, { method: 'PATCH', headers: JSON_HEADERS, body: JSON.stringify(payload) }),
   deleteElement: (projectId: string, elementId: string) =>
     request<Record<string, unknown>>(`/api/v1/elements/${elementId}?project_id=${encodeURIComponent(projectId)}`, { method: 'DELETE' }),
+  confirmCell: (projectId: string, cellId: string, payload: Record<string, unknown>) =>
+    request(`/api/v1/candidate-cells/${cellId}/confirm?project_id=${encodeURIComponent(projectId)}`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(payload) }),
+  suggestConversion: (projectId: string, cellId: string) =>
+    request<{formula: string|null; factor: number; explanation: string}>(`/api/v1/candidate-cells/${cellId}/suggest-conversion?project_id=${encodeURIComponent(projectId)}`, { method: 'POST' }),
+  articleCandidateRecords: (projectId: string, articleId: string) =>
+    request<{headers: {display_header:string;canonical_field:string;target_unit:string}[]; records: Record<string, unknown>[]}>(`/api/v1/articles/${articleId}/candidate-records?project_id=${encodeURIComponent(projectId)}`),
+  approveRecord: (projectId: string, recordId: string) =>
+    request(`/api/v1/candidate-records/${recordId}/approve?project_id=${encodeURIComponent(projectId)}`, { method: 'POST' }),
+  rejectRecord: (projectId: string, recordId: string) =>
+    request(`/api/v1/candidate-records/${recordId}/reject?project_id=${encodeURIComponent(projectId)}`, { method: 'POST' }),
+  batchApprove: (projectId: string, articleId: string, recordIds: string[]) =>
+    request(`/api/v1/articles/${articleId}/batch-approve?project_id=${encodeURIComponent(projectId)}`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ project_id: projectId, record_ids: recordIds }) }),
+  batchConfirmMappings: (projectId: string, articleId: string, confirmations: Record<string, unknown>[]) =>
+    request<{confirmed: number; errors: Record<string, unknown>[]}>(`/api/v1/articles/${articleId}/batch-confirm?project_id=${encodeURIComponent(projectId)}`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ project_id: projectId, article_id: articleId, confirmations }) }),
+  deleteRule: (projectId: string, ruleId: string, ruleType = 'mapping') =>
+    request(`/api/v1/rules/${ruleId}?project_id=${encodeURIComponent(projectId)}&rule_type=${ruleType}`, { method: 'DELETE' }),
+  manualFill: (projectId: string, articleId: string, payload: Record<string, unknown>) =>
+    request(`/api/v1/articles/${articleId}/manual-fill?project_id=${encodeURIComponent(projectId)}`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(payload) }),
+  finalize: (projectId: string, articleId: string) =>
+    request<{records: number}>(`/api/v1/articles/${articleId}/finalize?project_id=${encodeURIComponent(projectId)}`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ project_id: projectId, article_id: articleId }) }),
+  articleTrace: (projectId: string, articleId: string) =>
+    request<Record<string, unknown>[]>(`/api/v1/articles/${articleId}/trace?project_id=${encodeURIComponent(projectId)}`),
+  traceRecords: (projectId: string, articleId = '', query = '', limit = 100, offset = 0) => {
+    const params = new URLSearchParams({ project_id: projectId, q: query, limit: String(limit), offset: String(offset) })
+    if (articleId) params.set('article_id', articleId)
+    return request<{items: TraceRecordSummary[]; total: number; limit: number; offset: number}>(`/api/v1/trace-records?${params}`)
+  },
+  traceRecord: (projectId: string, recordId: string) =>
+    request<TraceRecordDetail>(`/api/v1/trace-records/${recordId}?project_id=${encodeURIComponent(projectId)}`),
+  exportArticle: (projectId: string, articleId: string, format = 'csv') =>
+    request<{path: string; records: number}>(`/api/v1/articles/${articleId}/export?project_id=${encodeURIComponent(projectId)}&format=${format}`),
 }
 
 export function watchTask(projectId: string, taskId: string, onEvent: (event: WorkflowEvent) => void, onDone: () => void): () => void {

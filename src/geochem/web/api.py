@@ -66,6 +66,39 @@ class MergeRequest(BaseModel):
     record_ids: list[str]
 
 
+class CellConfirmRequest(BaseModel):
+    target_field: str | None = None
+    target_unit: str | None = None
+    formula: str | None = None
+    conversion_factor: float | None = None
+
+
+class BatchApproveRequest(BaseModel):
+    project_id: str
+    record_ids: list[str]
+
+
+class ManualFillRequest(BaseModel):
+    resource_id: str
+    page_number: int
+    bbox: list[float]
+    target_header: str
+    value: str
+    unit: str = ""
+    explanation: str = ""
+
+
+class FinalizeRequest(BaseModel):
+    project_id: str
+    article_id: str
+
+
+class BatchConfirmRequest(BaseModel):
+    project_id: str
+    article_id: str
+    confirmations: list[dict[str, Any]]
+
+
 class HeaderAssignmentRequest(BaseModel):
     project_id: str
     config_id: str
@@ -87,6 +120,7 @@ class SettingsUpdateRequest(BaseModel):
     default_model: str
     vision_provider: str = ""
     vision_model: str = ""
+    api_keys: dict[str, str] = Field(default_factory=dict)
 
 
 class TaskManager:
@@ -310,6 +344,10 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.exception_handler(ValueError)
+    async def value_error_handler(request, exc):
+        return HTTPException(status_code=400, detail=str(exc))
 
     @app.get("/api/v1/health")
     def health():
@@ -542,6 +580,79 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
     def merge_records(request: MergeRequest):
         return service.merge_records(request.project_id, request.record_ids)
 
+    @app.post("/api/v1/candidate-cells/{cell_id}/confirm")
+    def confirm_cell(cell_id: str, request: CellConfirmRequest, project_id: str):
+        return service.confirm_cell_mapping(
+            project_id, cell_id,
+            target_field=request.target_field, target_unit=request.target_unit,
+            formula=request.formula, conversion_factor=request.conversion_factor,
+        )
+
+    @app.post("/api/v1/candidate-cells/{cell_id}/suggest-conversion")
+    def suggest_conversion(cell_id: str, project_id: str):
+        return service.suggest_conversion(project_id, cell_id)
+
+    @app.get("/api/v1/articles/{article_id}/candidate-records")
+    def article_records(article_id: str, project_id: str):
+        return service.article_candidate_records(project_id, article_id)
+
+    @app.post("/api/v1/candidate-records/{record_id}/approve")
+    def approve_record(record_id: str, project_id: str):
+        return service.approve_record(project_id, record_id)
+
+    @app.post("/api/v1/candidate-records/{record_id}/reject")
+    def reject_record(record_id: str, project_id: str):
+        return service.reject_record(project_id, record_id)
+
+    @app.post("/api/v1/articles/{article_id}/batch-approve")
+    def batch_approve(article_id: str, request: BatchApproveRequest):
+        return service.batch_approve_records(request.project_id, request.record_ids)
+
+    @app.post("/api/v1/articles/{article_id}/batch-confirm")
+    def batch_confirm_mappings(article_id: str, request: BatchConfirmRequest):
+        return service.batch_confirm_mappings(request.project_id, request.article_id, request.confirmations)
+
+    @app.delete("/api/v1/rules/{rule_id}")
+    def delete_rule(rule_id: str, project_id: str, rule_type: str = "mapping"):
+        return service.delete_rule(project_id, rule_id, rule_type)
+
+    @app.post("/api/v1/articles/{article_id}/manual-fill")
+    def manual_fill(article_id: str, request: ManualFillRequest, project_id: str):
+        return service.manual_fill(
+            project_id, article_id,
+            request.resource_id, request.page_number, request.bbox,
+            request.target_header, request.value, request.unit, request.explanation,
+        )
+
+    @app.post("/api/v1/articles/{article_id}/finalize")
+    def finalize(article_id: str, request: FinalizeRequest):
+        return service.finalize_standardized(request.project_id, request.article_id)
+
+    @app.get("/api/v1/trace-records")
+    def trace_records(
+        project_id: str,
+        article_id: str | None = None,
+        q: str = "",
+        limit: int = Query(default=100, ge=1, le=500),
+        offset: int = Query(default=0, ge=0),
+    ):
+        return service.trace_records(project_id, article_id, q, limit, offset)
+
+    @app.get("/api/v1/trace-records/{record_id}")
+    def trace_record_detail(record_id: str, project_id: str):
+        try:
+            return service.trace_record_detail(project_id, record_id)
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @app.get("/api/v1/articles/{article_id}/trace")
+    def article_trace(article_id: str, project_id: str):
+        return service.article_trace(project_id, article_id)
+
+    @app.get("/api/v1/articles/{article_id}/export")
+    def export_article(article_id: str, project_id: str, format: str = "csv"):
+        return service.export_article(project_id, article_id, format)
+
     @app.get("/api/v1/reviews")
     def reviews(project_id: str):
         return repo.reviews(project_id)
@@ -612,6 +723,13 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
             )
         else:
             config.task_models.pop("figure_extraction", None)
+        # Save API keys
+        if request.api_keys:
+            for provider_name, api_key in request.api_keys.items():
+                for provider in config.providers:
+                    if provider.name == provider_name:
+                        provider.api_key = api_key if api_key else None
+                        break
         save_config(config, Path(os.environ.get("GEOCHEM_CONFIG", "config/settings.yaml")))
         return {"status": "saved"}
 
