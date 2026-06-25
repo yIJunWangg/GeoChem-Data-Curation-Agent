@@ -5,7 +5,14 @@ const JSON_HEADERS = { 'Content-Type': 'application/json' }
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init)
   if (!response.ok) {
-    const detail = await response.text()
+    const body = await response.text()
+    let detail = body
+    try {
+      const parsed = JSON.parse(body)
+      detail = typeof parsed.detail === 'string' ? parsed.detail : body
+    } catch {
+      detail = body
+    }
     throw new Error(detail || `${response.status} ${response.statusText}`)
   }
   return response.json() as Promise<T>
@@ -70,21 +77,31 @@ export const api = {
     request<{confirmed: number; errors: Record<string, unknown>[]}>(`/api/v1/articles/${articleId}/batch-confirm?project_id=${encodeURIComponent(projectId)}`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ project_id: projectId, article_id: articleId, confirmations }) }),
   deleteRule: (projectId: string, ruleId: string, ruleType = 'mapping') =>
     request(`/api/v1/rules/${ruleId}?project_id=${encodeURIComponent(projectId)}&rule_type=${ruleType}`, { method: 'DELETE' }),
-  manualFill: (projectId: string, articleId: string, payload: Record<string, unknown>) =>
-    request(`/api/v1/articles/${articleId}/manual-fill?project_id=${encodeURIComponent(projectId)}`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(payload) }),
+  testProvider: (providerName: string, apiKey: string) =>
+    request<{success: boolean; models: {name:string;display_name:string;supports_vision:boolean}[]; error?: string}>(`/api/v1/providers/${providerName}/test`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ api_key: apiKey }) }),
   finalize: (projectId: string, articleId: string) =>
     request<{records: number}>(`/api/v1/articles/${articleId}/finalize?project_id=${encodeURIComponent(projectId)}`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ project_id: projectId, article_id: articleId }) }),
-  articleTrace: (projectId: string, articleId: string) =>
-    request<Record<string, unknown>[]>(`/api/v1/articles/${articleId}/trace?project_id=${encodeURIComponent(projectId)}`),
-  traceRecords: (projectId: string, articleId = '', query = '', limit = 100, offset = 0) => {
-    const params = new URLSearchParams({ project_id: projectId, q: query, limit: String(limit), offset: String(offset) })
+  traceRecords: (projectId: string, articleId?: string, query?: string) => {
+    const params = new URLSearchParams({ project_id: projectId })
     if (articleId) params.set('article_id', articleId)
-    return request<{items: TraceRecordSummary[]; total: number; limit: number; offset: number}>(`/api/v1/trace-records?${params}`)
+    if (query) params.set('q', query)
+    return request<any>(`/api/v1/trace-records?${params.toString()}`)
   },
   traceRecord: (projectId: string, recordId: string) =>
-    request<TraceRecordDetail>(`/api/v1/trace-records/${recordId}?project_id=${encodeURIComponent(projectId)}`),
-  exportArticle: (projectId: string, articleId: string, format = 'csv') =>
-    request<{path: string; records: number}>(`/api/v1/articles/${articleId}/export?project_id=${encodeURIComponent(projectId)}&format=${format}`),
+    request<any>(`/api/v1/trace-records/${recordId}?project_id=${encodeURIComponent(projectId)}`),
+  exportArticle: (projectId: string, articleId: string, format = 'csv', outputDir = '') => {
+    const params = new URLSearchParams({ project_id: projectId, format })
+    if (outputDir) params.set('output_dir', outputDir)
+    return request<{path: string; records: number; format: string}>(`/api/v1/articles/${articleId}/export?${params.toString()}`)
+  },
+  exportDirectory: (projectId: string) =>
+    request<{path: string; is_default: boolean}>(`/api/v1/export-directory?project_id=${encodeURIComponent(projectId)}`),
+  saveExportDirectory: (path: string) =>
+    request<{path: string; status: string}>('/api/v1/export-directory', { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify({ path }) }),
+  openExportDirectory: (projectId: string, path: string) =>
+    request<{path: string; status: string}>(`/api/v1/export-directory/open?project_id=${encodeURIComponent(projectId)}`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ path }) }),
+  articleTrace: (projectId: string, articleId: string) =>
+    request<Record<string, unknown>[]>(`/api/v1/articles/${articleId}/trace?project_id=${encodeURIComponent(projectId)}`),
 }
 
 export function watchTask(projectId: string, taskId: string, onEvent: (event: WorkflowEvent) => void, onDone: () => void): () => void {

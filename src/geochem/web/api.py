@@ -13,7 +13,7 @@ from typing import Any, Callable
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -115,12 +115,19 @@ class ConfirmAccessRequest(BaseModel):
     url: str
 
 
+class ProviderTestRequest(BaseModel):
+    api_key: str = ""
+
 class SettingsUpdateRequest(BaseModel):
     default_provider: str
     default_model: str
     vision_provider: str = ""
     vision_model: str = ""
     api_keys: dict[str, str] = Field(default_factory=dict)
+
+
+class ExportDirectoryRequest(BaseModel):
+    path: str = ""
 
 
 class TaskManager:
@@ -347,11 +354,44 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
 
     @app.exception_handler(ValueError)
     async def value_error_handler(request, exc):
-        return HTTPException(status_code=400, detail=str(exc))
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
 
     @app.get("/api/v1/health")
     def health():
         return {"status": "ok", "time": datetime.now().isoformat()}
+
+    @app.post("/api/v1/providers/{name}/test")
+    def test_provider(name: str, request: ProviderTestRequest):
+        from ..providers.openai_provider import OpenAIProvider
+        from ..providers.anthropic_provider import AnthropicProvider
+        from ..providers.google_provider import GoogleProvider
+        from ..providers.zhipu_provider import ZhipuProvider
+        from ..providers.ollama_provider import OllamaProvider
+
+        # Load base_url from config for this provider
+        cfg = load_config()
+        prov_cfg = cfg.get_provider(name)
+        base_url = prov_cfg.base_url if prov_cfg else None
+
+        provider_map = {
+            "openai": OpenAIProvider,
+            "anthropic": AnthropicProvider,
+            "xiaomi-anthropic": AnthropicProvider,
+            "google": GoogleProvider,
+            "zhipu": ZhipuProvider,
+            "ollama": OllamaProvider,
+        }
+        cls = provider_map.get(name, OpenAIProvider)
+        try:
+            kwargs = {"api_key": request.api_key}
+            if base_url:
+                kwargs["base_url"] = base_url
+            provider = cls(**kwargs)
+            valid = provider.validate_api_key()
+            models = provider.list_models() if valid else []
+            return {"success": valid, "models": models}
+        except Exception as e:
+            return {"success": False, "models": [], "error": str(e)}
 
     @app.get("/api/v1/workspace")
     def workspace():
@@ -650,8 +690,8 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
         return service.article_trace(project_id, article_id)
 
     @app.get("/api/v1/articles/{article_id}/export")
-    def export_article(article_id: str, project_id: str, format: str = "csv"):
-        return service.export_article(project_id, article_id, format)
+    def export_article(article_id: str, project_id: str, format: str = "csv", output_dir: str | None = None):
+        return service.export_article(project_id, article_id, format, output_dir)
 
     @app.get("/api/v1/reviews")
     def reviews(project_id: str):
@@ -690,6 +730,7 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
             "default_model": default.model if default else "",
             "vision_provider": vision.provider if vision else "",
             "vision_model": vision.model if vision else "",
+            "export_dir": config.ui_preferences.get("export_dir", ""),
             "providers": providers,
         }
 
@@ -732,6 +773,54 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
                         break
         save_config(config, Path(os.environ.get("GEOCHEM_CONFIG", "config/settings.yaml")))
         return {"status": "saved"}
+
+    @app.get("/api/v1/export-directory")
+    def export_directory(project_id: str):
+        config = load_config()
+        configured = config.ui_preferences.get("export_dir", "") if config.ui_preferences else ""
+        if configured:
+            path = Path(configured).expanduser()
+            is_default = False
+        else:
+            _project_config, project_dir = pm.load_project(project_id)
+            path = project_dir / "output"
+            is_default = True
+        return {"path": str(path), "is_default": is_default}
+
+    @app.put("/api/v1/export-directory")
+    def update_export_directory(request: ExportDirectoryRequest):
+        config_path = Path(os.environ.get("GEOCHEM_CONFIG", "config/settings.yaml"))
+        config = load_config(config_path)
+        config.ui_preferences = dict(config.ui_preferences or {})
+        if request.path.strip():
+            config.ui_preferences["export_dir"] = request.path.strip()
+        else:
+            config.ui_preferences.pop("export_dir", None)
+        save_config(config, config_path)
+        return {"path": config.ui_preferences.get("export_dir", ""), "status": "saved"}
+
+    @app.post("/api/v1/export-directory/open")
+    def open_export_directory(project_id: str, request: ExportDirectoryRequest):
+        path_text = request.path.strip()
+        if not path_text:
+            _project_config, project_dir = pm.load_project(project_id)
+            path = project_dir / "output"
+        else:
+            path = Path(path_text).expanduser()
+        path.mkdir(parents=True, exist_ok=True)
+        try:
+            import platform
+            import subprocess
+            system = platform.system()
+            if system == "Darwin":
+                subprocess.Popen(["open", str(path)])
+            elif system == "Windows":
+                os.startfile(str(path))  # type: ignore[attr-defined]
+            else:
+                subprocess.Popen(["xdg-open", str(path)])
+        except Exception as exc:
+            raise ValueError(f"Cannot open export directory: {exc}") from exc
+        return {"path": str(path), "status": "opened"}
 
     @app.get("/api/v1/tasks/{task_id}")
     def task(task_id: str, project_id: str):

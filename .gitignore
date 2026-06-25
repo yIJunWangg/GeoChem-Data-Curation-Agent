@@ -18,4 +18,6 @@ logs/
 .mimocode/
 tests/
 .DS_Store
+geochem-data/
+output/
 

@@ -363,6 +363,10 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .settings-card { padding: 24px; margin-bottom: 13px; }
 .settings-card h2 { margin: 0 0 6px; font-size: 17px; }
 .card-desc { color: var(--muted); font-size: 12px; margin: 0 0 20px; line-height: 1.5; }
+.export-directory-card { flex: 0 0 auto; }
+.export-directory-row { display: grid; grid-template-columns: minmax(360px, 1fr) auto auto auto; gap: 8px; padding: 12px 14px 8px; }
+.export-directory-card .card-desc { margin: 0 14px 10px; }
+.form-success { margin: 0 14px 12px; color: var(--green); font-size: 12px; font-weight: 600; }
 .setting-item { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 14px 0; border-bottom: 1px solid #e8edf3; }
 .setting-item:last-child { border-bottom: 0; }
 .setting-label { flex: 1; }
@@ -384,6 +388,17 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; }
 .status-dot.online { background: #027a48; box-shadow: 0 0 6px rgba(2,122,72,.4); }
 .status-row code { padding: 4px 8px; background: #f2f5f8; border-radius: 4px; font-size: 12px; }
+.model-select-row { display: flex; gap: 20px; }
+.model-select-item { flex: 1; }
+.model-select-item label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; font-weight: 600; }
+.model-select-item select { width: 100%; }
+.key-input-row { display: flex; gap: 8px; align-items: center; }
+.key-input-row input { flex: 1; }
+.test-btn { min-width: 48px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; background: #f8fafd; cursor: pointer; font-size: 12px; font-weight: 600; }
+.test-btn:hover { background: #eaf3ff; border-color: #b8d7ff; }
+.test-btn.success { background: #ecfdf3; color: #027a48; border-color: #abefc6; }
+.test-btn.fail { background: #fff5f5; color: #d92d20; border-color: #ffc9c9; }
+.test-btn:disabled { opacity: 0.5; cursor: wait; }
 .empty-state { min-height: 180px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 24px; color: var(--muted); text-align: center; }
 .empty-state.compact { min-height: 100px; }
 .empty-state h3, .empty-state p { margin: 0; }

@@ -253,10 +253,16 @@ export default function WorkbenchPage() {
     const { task_id } = await starter()
     watchTask(projectId, task_id, addLog, async () => {
       const task = await api.task(projectId, task_id).catch(() => undefined)
-      setBusy(false); refreshWorkbench()
+      setBusy(false)
+      // If task result has batch_id, directly set it so batch query can fire immediately
+      const resultBatchId = task?.result?.batch_id
+      if (resultBatchId) {
+        queryClient.setQueryData(['session', projectId, articleId], (old: any) => old ? {...old, active_batch_id: resultBatchId} : old)
+      }
+      refreshWorkbench()
       if (task?.status === 'completed' && nextStep !== undefined) setStep(nextStep)
     })
-  }, [addLog, clearLogs, projectId, refreshWorkbench])
+  }, [addLog, articleId, clearLogs, projectId, queryClient, refreshWorkbench])
   useEffect(() => {
     if (!busy && session.data && ['pending', 'stale'].includes(session.data.discovery_status) && resources.data?.some((resource) => resource.resource_type.includes('pdf'))) {
       runTask(() => api.discover(projectId, articleId))
@@ -298,7 +304,11 @@ export default function WorkbenchPage() {
         <section className="candidate-sheet panel">{batch.data ? <CandidateGrid payload={batch.data} projectId={projectId} onRefresh={() => queryClient.invalidateQueries({ queryKey: ['batch', projectId, activeBatchId] })} onCell={setActiveCell} /> : <div className="empty-state"><Table2 size={34} /><h3>尚未生成样品级候选表</h3><p>选择资源后运行 AI 抽取，结果将严格使用目标表头，缺失字段保留为空。</p></div>}</section>
         <aside className="cell-inspector panel"><div className="panel-heading"><strong>单元格证据</strong></div>{activeCell ? <CellInspector cell={activeCell} elements={all} projectId={projectId} /> : <div className="empty-state compact">点击候选表中的单元格，查看原始值、单位、证据和冲突候选。</div>}</aside>
       </div>}
-      {step === 3 && <MappingReview payload={batch.data} elements={all} projectId={projectId} onRefresh={() => queryClient.invalidateQueries({ queryKey: ['batch', projectId, activeBatchId] })} onNavigate={(path) => { refreshWorkbench(); navigate(path) }} />}
+      {step === 3 && <MappingReview payload={batch.data} elements={all} projectId={projectId} headerConfigId={session.data?.header_config_id || ''} onRefresh={() => {
+        queryClient.invalidateQueries({ queryKey: ['batch', projectId, activeBatchId] })
+        queryClient.invalidateQueries({ queryKey: ['rules', projectId] })
+        queryClient.invalidateQueries({ queryKey: ['reviews', projectId] })
+      }} onNavigate={(path) => { refreshWorkbench(); navigate(path) }} />}
     </div>
     <TaskConsole logs={logs} busy={busy} />
   </div>
@@ -309,7 +319,7 @@ function CellInspector({ cell, elements, projectId }: { cell: CandidateCell; ele
   return <div className="cell-detail"><span className={`risk-tag ${cell.risk_level}`}>{cell.risk_level} risk</span><h3>{cell.target_header}</h3><dl><dt>当前值</dt><dd>{cell.value || '空'}</dd><dt>原始字段</dt><dd>{cell.original_field || '—'}</dd><dt>原始单位</dt><dd>{cell.original_unit || '—'}</dd><dt>目标单位</dt><dd>{cell.target_unit || '—'}</dd><dt>置信度</dt><dd>{Math.round(cell.confidence * 100)}%</dd><dt>PDF 位置</dt><dd>{cell.page_number ? `第 ${cell.page_number} 页` : '—'}</dd></dl>{element?.preview_path && <img src={api.previewUrl(projectId, element.element_id)} />}{element && <p className="source-text">{element.context_text || element.text_content}</p>}{cell.alternatives.length > 0 && <div className="conflict-box"><strong>存在 {cell.alternatives.length} 个冲突候选</strong>{cell.alternatives.map((value, index) => <p key={index}>{String(value.value || '')}</p>)}</div>}</div>
 }
 
-function MappingReview({ payload, elements, projectId, onRefresh, onNavigate }: { payload?: BatchPayload; elements: DocumentElement[]; projectId: string; onRefresh: () => void; onNavigate: (path: string) => void }) {
+function MappingReview({ payload, elements, projectId, headerConfigId, onRefresh, onNavigate }: { payload?: BatchPayload; elements: DocumentElement[]; projectId: string; headerConfigId: string; onRefresh: () => void; onNavigate: (path: string) => void }) {
   const { articleId } = useAppStore()
   const [activeCell, setActiveCell] = useState<CandidateCell | null>(null)
   const [formula, setFormula] = useState('')
@@ -317,12 +327,13 @@ function MappingReview({ payload, elements, projectId, onRefresh, onNavigate }: 
   const [llmLoading, setLlmLoading] = useState(false)
   const [llmSuggestion, setLlmSuggestion] = useState<{formula:string|null;factor:number;explanation:string}|null>(null)
   const [selectedCells, setSelectedCells] = useState<Set<string>>(new Set())
-  const [targetHeaders, setTargetHeaders] = useState<{display_header:string;canonical_field:string;target_unit:string}[]>([])
+  const [error, setError] = useState('')
+  const initRef = useRef('')
 
   // Load target headers from assigned config
   const headersQuery = useQuery({ queryKey: ['headers', projectId], queryFn: () => api.headers(projectId), enabled: Boolean(projectId) })
   const allHeaders = headersQuery.data || []
-  const currentConfig = allHeaders[0] // The assigned config
+  const currentConfig = allHeaders.find((config) => config.config_id === headerConfigId)
   const configHeaders = currentConfig?.headers || []
 
   const allCells = payload?.records.flatMap((record) => Object.values(record.cells)) || []
@@ -330,12 +341,13 @@ function MappingReview({ payload, elements, projectId, onRefresh, onNavigate }: 
     cell.mapping_status !== 'confirmed' || cell.review_status === 'pending' || cell.alternatives.length
   )
 
-  // Initialize all unresolved as selected
-  const initRef = { current: false }
-  if (!initRef.current && unresolved.length && selectedCells.size === 0) {
-    initRef.current = true
-    setTimeout(() => setSelectedCells(new Set(unresolved.map(c => c.cell_id))), 0)
-  }
+  useEffect(() => {
+    const signature = unresolved.map((cell) => cell.cell_id).join('|')
+    if (signature && initRef.current !== signature && selectedCells.size === 0) {
+      initRef.current = signature
+      setSelectedCells(new Set(unresolved.map((cell) => cell.cell_id)))
+    }
+  }, [selectedCells.size, unresolved])
 
   const toggleCell = (cellId: string) => {
     setSelectedCells(prev => { const next = new Set(prev); next.has(cellId) ? next.delete(cellId) : next.add(cellId); return next })
@@ -354,21 +366,29 @@ function MappingReview({ payload, elements, projectId, onRefresh, onNavigate }: 
         setLlmSuggestion(suggestion)
         setFormula(suggestion.formula || '')
         setFactor(String(suggestion.factor ?? ''))
-      } catch { setLlmSuggestion(null) }
+      } catch (err) {
+        setLlmSuggestion(null)
+        setError(err instanceof Error ? err.message : 'AI 换算建议失败')
+      }
       setLlmLoading(false)
     }
   }
 
   const doConfirm = async () => {
     if (!activeCell) return
-    await api.confirmCell(projectId, activeCell.cell_id, {
-      target_field: activeCell.target_field,
-      target_unit: activeCell.target_unit,
-      formula: formula || undefined,
-      conversion_factor: factor ? parseFloat(factor) : undefined,
-      llm_suggestion: llmSuggestion,
-    })
-    setActiveCell(null); onRefresh()
+    setError('')
+    try {
+      await api.confirmCell(projectId, activeCell.cell_id, {
+        target_field: activeCell.target_field,
+        target_unit: activeCell.target_unit,
+        formula: formula || undefined,
+        conversion_factor: factor ? parseFloat(factor) : undefined,
+        llm_suggestion: llmSuggestion,
+      })
+      setActiveCell(null); onRefresh()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '确认映射失败')
+    }
   }
 
   const doBatchConfirm = async () => {
@@ -378,8 +398,18 @@ function MappingReview({ payload, elements, projectId, onRefresh, onNavigate }: 
       target_unit: cell.target_unit,
     }))
     if (!items.length) return
-    await api.batchConfirmMappings(projectId, articleId, items)
-    setSelectedCells(new Set()); onRefresh()
+    setError('')
+    try {
+      const result = await api.batchConfirmMappings(projectId, articleId, items)
+      if (result.errors?.length) setError(`${result.errors.length} 条映射确认失败，请逐条检查。`)
+      setSelectedCells(new Set()); onRefresh()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '批量确认失败')
+    }
+  }
+
+  if (!headerConfigId || !currentConfig) {
+    return <div className="mapping-review"><section className="panel mapping-list"><div className="empty-state"><FileText size={32} /><h3>当前文章还没有绑定表头配置</h3><p>请先在文献导入或表头配置页面为文章选择一套表头，再进行字段映射。</p></div></section></div>
   }
 
   return <div className="mapping-review">
@@ -400,6 +430,7 @@ function MappingReview({ payload, elements, projectId, onRefresh, onNavigate }: 
     </section>
     <aside className="panel mapping-detail">
       <div className="panel-heading"><strong>映射确认</strong></div>
+      {error && <p className="form-error">{error}</p>}
       {activeCell ? <>
         <h3>{activeCell.original_field} → {activeCell.target_header}</h3>
         <dl><dt>当前值</dt><dd>{activeCell.value}</dd><dt>原始单位</dt><dd>{activeCell.original_unit}</dd><dt>目标单位</dt><dd>{activeCell.target_unit}</dd><dt>置信度</dt><dd>{Math.round(activeCell.confidence * 100)}%</dd></dl>

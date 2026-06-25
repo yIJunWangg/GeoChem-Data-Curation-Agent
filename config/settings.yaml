@@ -1,4 +1,5 @@
-default_project_dir: /Users/wanghaha/GeoChem_Projects
+default_project_dir: /Users/wanghaha/vscode_workspace/macos app/GeoChem Data Curation
+  Agent/geochem-data
 providers:
 - name: anthropic
   display_name: Anthropic

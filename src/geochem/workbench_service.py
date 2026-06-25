@@ -426,21 +426,39 @@ class WorkbenchService:
                 raise ValueError("Candidate cell not found")
             cell = dict(cell)
 
-            # F1: Validate target_field against header config
-            if target_field:
+            # F1: Validate target_field against header config (only if user explicitly changed it)
+            if target_field and target_field != cell.get("target_header"):
                 headers = self.target_headers(project_id, cell["article_id"])
                 valid_fields = {h["display_header"] for h in headers} | {h["canonical_field"] for h in headers}
                 if target_field not in valid_fields:
                     raise ValueError(f"目标字段 '{target_field}' 不在当前表头配置中")
 
-            # B3: Check for duplicate target_field in same record
-            if target_field:
+            # B3: Check for duplicate target_field in same record (only if user explicitly changed to a NEW field)
+            if target_field and target_field != cell.get("target_header"):
                 conflict = db.fetch_one(
-                    "SELECT cell_id FROM candidate_cells WHERE candidate_record_id = ? AND target_header = ? AND cell_id != ?",
+                    "SELECT cell_id FROM candidate_cells WHERE candidate_record_id = ? AND target_header = ? AND cell_id != ? AND mapping_status != 'conflict'",
                     (cell["candidate_record_id"], target_field, cell_id),
                 )
                 if conflict:
                     raise ValueError(f"该记录中已有字段 '{target_field}'，不能重复映射")
+            # For conflict cells being confirmed, merge alternatives into the primary cell
+            if cell.get("mapping_status") == "conflict":
+                primary = db.fetch_one(
+                    "SELECT cell_id, alternatives_json FROM candidate_cells WHERE candidate_record_id = ? AND target_header = ? AND cell_id != ? AND mapping_status = 'confirmed'",
+                    (cell["candidate_record_id"], cell.get("target_header"), cell_id),
+                )
+                if primary:
+                    # Merge this cell's value as an alternative into the primary
+                    alts = json.loads(primary["alternatives_json"] or "[]")
+                    alts.append({"value": cell.get("value", ""), "cell_id": cell_id, "status": "confirmed"})
+                    db.execute(
+                        "UPDATE candidate_cells SET alternatives_json = ? WHERE cell_id = ?",
+                        (json.dumps(alts, ensure_ascii=False), primary["cell_id"]),
+                    )
+                    # Remove the conflict cell
+                    db.execute("DELETE FROM candidate_cells WHERE cell_id = ?", (cell_id,))
+                    db.commit()
+                    return {"cell_id": cell_id, "status": "merged_into_primary"}
 
             now = datetime.now().isoformat()
             sets = ["mapping_status = 'confirmed'", "review_status = 'confirmed'", "updated_at = ?"]
@@ -491,21 +509,10 @@ class WorkbenchService:
         mapping_type = "unit_conversion" if formula else "user_override"
         now = datetime.now().isoformat()
 
-        # F3: Get config_id for this article
-        config_id = ""
-        article_id = cell.get("article_id", "")
-        if article_id:
-            assignment = db.fetch_one(
-                "SELECT config_id FROM article_header_assignments WHERE project_id = ? AND article_id = ? AND status = 'confirmed' ORDER BY created_at DESC LIMIT 1",
-                (project_id, article_id),
-            )
-            if assignment:
-                config_id = assignment["config_id"]
-
         # B4: Check for existing rule with same source→target
         existing = db.fetch_one(
-            "SELECT rule_id FROM mapping_rules WHERE source_field = ? AND target_field = ? AND (config_id = ? OR config_id = '')",
-            (source_field, final_target, config_id),
+            "SELECT rule_id FROM mapping_rules WHERE source_field = ? AND target_field = ?",
+            (source_field, final_target),
         )
         if existing:
             db.execute(
@@ -903,9 +910,25 @@ class WorkbenchService:
             )
             if not latest_batch:
                 return {"article_id": article_id, "records": 0}
+            db.execute(
+                """DELETE FROM standardized_cell_provenance
+                   WHERE record_id IN (
+                       SELECT s.record_id FROM standardized_records s
+                       JOIN candidate_records cr ON cr.candidate_record_id = s.row_id
+                       WHERE s.article_id = ? AND cr.batch_id = ?
+                   )""",
+                (article_id, latest_batch["batch_id"]),
+            )
+            db.execute(
+                """DELETE FROM standardized_records
+                   WHERE article_id = ? AND row_id IN (
+                       SELECT candidate_record_id FROM candidate_records WHERE batch_id = ?
+                   )""",
+                (article_id, latest_batch["batch_id"]),
+            )
             approved_records = db.fetch_all(
                 """SELECT * FROM candidate_records
-                   WHERE batch_id = ? AND quality_grade != 'E' ORDER BY row_index""",
+                   WHERE batch_id = ? AND quality_grade IN ('A', 'B', 'C') ORDER BY row_index""",
                 (latest_batch["batch_id"],),
             )
             now = datetime.now().isoformat()
@@ -1304,7 +1327,13 @@ class WorkbenchService:
             "context": item.get("source_context") or "",
         }
 
-    def export_article(self, project_id: str, article_id: str, format: str = "csv") -> dict[str, Any]:
+    def export_article(
+        self,
+        project_id: str,
+        article_id: str,
+        format: str = "csv",
+        output_dir: str | None = None,
+    ) -> dict[str, Any]:
         """Export standardized records for an article."""
         _config, project_dir = self.pm.load_project(project_id)
         db = self.pm.get_database(project_id)
@@ -1315,8 +1344,16 @@ class WorkbenchService:
                 (article_id,),
             )
             if not records:
-                raise ValueError("No standardized records. Run finalize first.")
-            out_dir = project_dir / "output"
+                db.close()
+                self.finalize_standardized(project_id, article_id)
+                db = self.pm.get_database(project_id)
+                records = db.fetch_all(
+                    "SELECT * FROM standardized_records WHERE article_id = ? ORDER BY processed_at",
+                    (article_id,),
+                )
+            if not records:
+                raise ValueError("No standardized records. Run review/finalize first.")
+            out_dir = self._export_directory(project_id, project_dir, output_dir)
             out_dir.mkdir(parents=True, exist_ok=True)
 
             rows = []
@@ -1341,9 +1378,27 @@ class WorkbenchService:
             else:
                 raise ValueError(f"Unsupported format: {format}")
 
+            job_id = self._next_id(db, "export_jobs", "job_id", "EXP", 7)
+            db.execute(
+                """INSERT INTO export_jobs
+                   (job_id, project_id, article_id, table_id, export_format, output_path,
+                    record_count, status, created_at)
+                   VALUES (?, ?, ?, '', ?, ?, ?, 'completed', ?)""",
+                (job_id, project_id, article_id, format, str(path), len(rows), datetime.now().isoformat()),
+            )
+            db.commit()
             return {"path": str(path), "records": len(rows), "format": format}
         finally:
             db.close()
+
+    def _export_directory(self, project_id: str, project_dir: Path, output_dir: str | None = None) -> Path:
+        if output_dir:
+            return Path(output_dir).expanduser()
+        config = load_config()
+        configured = config.ui_preferences.get("export_dir") if config.ui_preferences else None
+        if configured:
+            return Path(str(configured)).expanduser()
+        return project_dir / "output"
 
     def create_extraction_batch(
         self,
@@ -1374,10 +1429,24 @@ class WorkbenchService:
                 records = self._local_records(element, headers)
                 if use_llm and (not records or element["element_type"] in {"paragraph", "figure"}):
                     try:
-                        records.extend(self._llm_records(db, project_id, article_id, element, headers))
-                    except Exception:
+                        llm_records = self._llm_records(db, project_id, article_id, element, headers)
+                        if not llm_records and element["element_type"] == "figure" and progress:
+                            progress(
+                                "图像资源等待视觉模型配置，暂未生成候选值",
+                                0.1 + 0.75 * (index / max(1, len(elements))),
+                                {"element_id": element["element_id"], "status": "waiting_for_vision_model"},
+                            )
+                        records.extend(llm_records)
+                    except Exception as exc:
                         if element["element_type"] == "figure":
                             db.execute("UPDATE document_elements SET status = 'waiting_for_vision_model' WHERE element_id = ?", (element["element_id"],))
+                        db.commit()
+                        if progress:
+                            progress(
+                                f"资源 {element['element_id']} 的 AI 抽取失败: {exc}",
+                                0.1 + 0.75 * (index / max(1, len(elements))),
+                                {"element_id": element["element_id"], "error": str(exc)[:1000]},
+                            )
                 extracted.extend({"element": element, "record": record} for record in records)
                 if progress:
                     progress(
@@ -1386,7 +1455,7 @@ class WorkbenchService:
                         {"element_id": element["element_id"], "records": len(records)},
                     )
             for item in extracted:
-                self._merge_record(db, batch_id, article_id, item["element"], item["record"], headers)
+                self._merge_record(db, batch_id, article_id, item["element"], item["record"], headers, project_id)
             count_row = db.fetch_one("SELECT COUNT(*) AS n FROM candidate_records WHERE batch_id = ?", (batch_id,))
             count = int(count_row["n"] or 0)
             db.execute(
@@ -1522,10 +1591,14 @@ class WorkbenchService:
         task_config = config.get_task_model(task_name)
         if element["element_type"] == "figure":
             if not task_config:
+                db.execute("UPDATE document_elements SET status = 'waiting_for_vision_model' WHERE element_id = ?", (element["element_id"],))
+                db.commit()
                 return []
             provider = config.get_provider(task_config.provider)
             model_config = next((model for model in provider.models if model.name == task_config.model), None) if provider else None
             if not model_config or not model_config.supports_vision or not element.get("preview_path"):
+                db.execute("UPDATE document_elements SET status = 'waiting_for_vision_model' WHERE element_id = ?", (element["element_id"],))
+                db.commit()
                 return []
         compact_headers = [{
             "header": h["display_header"], "field": h["canonical_field"],
@@ -1561,7 +1634,11 @@ class WorkbenchService:
             max_tokens_override=5000, use_cache=True,
         )
         match = re.search(r"\{[\s\S]*\}", response.content or "")
-        parsed = json.loads(match.group(0) if match else response.content)
+        try:
+            parsed = json.loads(match.group(0) if match else response.content)
+        except Exception as exc:
+            summary = (response.content or "").strip().replace("\n", " ")[:500]
+            raise ValueError(f"LLM 返回无法解析为候选记录 JSON: {summary}") from exc
         records = parsed.get("records", []) if isinstance(parsed, dict) else parsed
         return [
             {**record, "_source_method": "llm"}
@@ -1569,7 +1646,7 @@ class WorkbenchService:
             if isinstance(record, dict) and isinstance(record.get("values"), dict)
         ]
 
-    def _merge_record(self, db, batch_id: str, article_id: str, element: dict[str, Any], record: dict[str, Any], headers: list[dict[str, Any]]) -> None:
+    def _merge_record(self, db, batch_id: str, article_id: str, element: dict[str, Any], record: dict[str, Any], headers: list[dict[str, Any]], project_id: str = "") -> None:
         sample_id = str(record.get("sample_id") or record.get("values", {}).get(self._sample_header(headers)) or "").strip()
         sample_key = self._normalize_sample(sample_id) if sample_id else f"unmatched:{element['element_id']}:{self._next_row_index(db, batch_id)}"
         existing = db.fetch_one("SELECT * FROM candidate_records WHERE batch_id = ? AND sample_key = ?", (batch_id, sample_key))
@@ -1579,12 +1656,17 @@ class WorkbenchService:
             db.execute("UPDATE candidate_records SET merge_status = 'auto_merged', updated_at = ? WHERE candidate_record_id = ?", (now, record_id))
         else:
             record_id = self._next_id(db, "candidate_records", "candidate_record_id", "CREC", 7)
+            initial_quality = "B" if record.get("_source_method") == "local_table" else "D"
             db.execute(
                 """INSERT INTO candidate_records
                    (candidate_record_id, batch_id, article_id, sample_key, sample_id, row_index,
                     merge_status, quality_grade, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, 'D', ?, ?)""",
-                (record_id, batch_id, article_id, sample_key, sample_id, self._next_row_index(db, batch_id), "matched" if sample_id else "unmatched", now, now),
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    record_id, batch_id, article_id, sample_key, sample_id,
+                    self._next_row_index(db, batch_id), "matched" if sample_id else "unmatched",
+                    initial_quality, now, now,
+                ),
             )
         header_lookup = {h["display_header"]: h for h in headers}
         canonical_lookup = {self._norm(h["canonical_field"]): h for h in headers}

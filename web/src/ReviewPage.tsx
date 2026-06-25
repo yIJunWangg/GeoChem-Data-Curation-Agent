@@ -124,7 +124,17 @@ export function ReviewPage() {
     const dataColumns = displayedHeaders.map<ColDef<CandidateRecord>>((header) => ({
       field: `data.${header.display_header}`, colId: header.display_header, headerName: header.display_header,
       minWidth: 86, width: Math.min(132, Math.max(92, header.display_header.length * 8 + 24)),
+      editable: true,
       valueGetter: ({ data }) => data?.data?.[header.display_header] || '',
+      valueSetter: ({ data, newValue }) => {
+        if (!data) return false
+        if (!data.data) data.data = {}
+        const old = data.data[header.display_header] || ''
+        const val = String(newValue ?? '')
+        if (old === val) return false
+        data.data[header.display_header] = val
+        return true
+      },
       tooltipValueGetter: ({ data }) => data?.data?.[header.display_header] || '空',
       cellClass: ({ data }) => {
         const cell = data?.cells?.[header.display_header]
@@ -146,13 +156,31 @@ export function ReviewPage() {
     const cell = event.data?.cells?.[header]
     if (cell) setActiveEvidence(cellEvidence(cell, elements))
   }
+  const onCellValueChanged = async (event: any) => {
+    const header = event.column?.getColId?.()
+    const record = event.data as CandidateRecord | undefined
+    if (!header || !record) return
+    const cell = record.cells?.[header]
+    const newValue = String(event.newValue ?? '')
+    if (cell) {
+      await api.updateCell(projectId, cell.cell_id, { value: newValue, review_status: 'confirmed' })
+    }
+    refresh()
+  }
+
   const onSelectionChanged = (event: SelectionChangedEvent<CandidateRecord>) => setSelectedRows(event.api.getSelectedRows().map((record) => record.candidate_record_id))
 
   return <div className="page review-page">
     <div className="page-title-row review-title-row"><div><h1>人工审核</h1><p>逐行确认候选数据，点击原文标签或单元格核对 PDF 证据。</p></div><div className="review-actions">
       <button disabled={!selectedRows.length} onClick={() => applyToSelected('reject')}><ShieldX size={15}/>拒绝 ({selectedRows.length})</button>
       <button className="primary-button" disabled={!selectedRows.length} onClick={() => applyToSelected('approve')}><ShieldCheck size={15}/>通过 ({selectedRows.length})</button>
-      <button className="primary-button" onClick={async () => { await api.finalize(projectId, articleId); queryClient.invalidateQueries({ queryKey: ['standardized'] }) }}>生成标准化记录</button>
+      <button className="primary-button" onClick={async () => {
+        await api.finalize(projectId, articleId)
+        queryClient.invalidateQueries({ queryKey: ['standardized'] })
+        queryClient.invalidateQueries({ queryKey: ['standardized', projectId] })
+        queryClient.invalidateQueries({ queryKey: ['trace-records', projectId] })
+        queryClient.invalidateQueries({ queryKey: ['candidate-records', projectId, articleId] })
+      }}>生成标准化记录</button>
     </div></div>
     <div className="review-toolbar panel">
       <div className="search-box"><Search size={15}/><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索 SampleID 或值"/></div>
@@ -176,6 +204,7 @@ export function ReviewPage() {
           getRowId={({ data }) => data.candidate_record_id}
           onSelectionChanged={onSelectionChanged}
           onCellClicked={onCellClicked}
+          onCellValueChanged={onCellValueChanged}
           tooltipShowDelay={250}
         /></div>
       </section>

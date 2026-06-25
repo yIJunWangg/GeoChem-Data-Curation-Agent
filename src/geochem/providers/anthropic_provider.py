@@ -112,8 +112,6 @@ class AnthropicProvider(BaseProvider):
     def validate_api_key(self) -> bool:
         try:
             client = self._get_client()
-            # Anthropic doesn't have a simple list models endpoint,
-            # so we do a minimal request
             client.messages.create(
                 model="claude-haiku-4-5-20251001",
                 messages=[{"role": "user", "content": "hi"}],
@@ -121,10 +119,13 @@ class AnthropicProvider(BaseProvider):
             )
             return True
         except Exception as e:
-            if "authentication" in str(e).lower():
-                logger.warning(f"Anthropic API key invalid: {e}")
+            err = str(e).lower()
+            # Authentication errors = key is invalid
+            if "authentication" in err or "invalid" in err or "401" in err or "api_key" in err or "permission" in err:
+                logger.warning(f"API key invalid: {e}")
                 return False
-            # Other errors (rate limit, etc.) mean the key works
+            # Other errors (model not found, rate limit, timeout) = key likely works
+            logger.info(f"Key validation non-fatal error (key likely valid): {e}")
             return True
 
     def list_models(self) -> list[dict[str, Any]]:

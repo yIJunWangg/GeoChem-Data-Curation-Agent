@@ -296,3 +296,68 @@ def test_trace_api_defaults_to_all_articles_and_deduplicates_finalize_runs(tmp_p
     assert filtered.json()["total"] == 46
     assert detail.status_code == 200
     assert detail.json()["resources"][0]["resource_id"] == "RES_WEB"
+    db = pm.get_database("WEB_TEST")
+    try:
+        assert db.fetch_one("SELECT COUNT(*) AS n FROM standardized_records WHERE article_id = 'ART_WEB'")["n"] == 47
+        assert db.fetch_one("SELECT COUNT(*) AS n FROM standardized_cell_provenance")["n"] > 47
+    finally:
+        db.close()
+
+
+def test_finalize_excludes_candidate_grade_d_records(tmp_path):
+    pm, _headers = _workspace(tmp_path)
+    service = WorkbenchService(pm)
+    service.discover_article("WEB_TEST", "ART_WEB")
+    tables = [
+        item for item in service.list_elements("WEB_TEST", "ART_WEB")
+        if item["element_type"] == "table" and item["page_number"] in {5, 6}
+    ]
+    service.set_selections("WEB_TEST", "ART_WEB", [item["element_id"] for item in tables])
+    batch = service.create_extraction_batch("WEB_TEST", "ART_WEB", use_llm=False)
+    db = pm.get_database("WEB_TEST")
+    try:
+        first = db.fetch_one(
+            "SELECT candidate_record_id FROM candidate_records WHERE batch_id = ? ORDER BY row_index LIMIT 1",
+            (batch["batch_id"],),
+        )
+        db.execute(
+            "UPDATE candidate_records SET quality_grade = 'D' WHERE candidate_record_id = ?",
+            (first["candidate_record_id"],),
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    finalized = service.finalize_standardized("WEB_TEST", "ART_WEB")
+    summaries = service.trace_records("WEB_TEST")
+
+    assert finalized["records"] == 46
+    assert summaries["total"] == 46
+
+
+def test_export_auto_finalizes_and_records_trace(tmp_path):
+    pm, _headers = _workspace(tmp_path)
+    service = WorkbenchService(pm)
+    service.discover_article("WEB_TEST", "ART_WEB")
+    tables = [
+        item for item in service.list_elements("WEB_TEST", "ART_WEB")
+        if item["element_type"] == "table" and item["page_number"] in {5, 6}
+    ]
+    service.set_selections("WEB_TEST", "ART_WEB", [item["element_id"] for item in tables])
+    service.create_extraction_batch("WEB_TEST", "ART_WEB", use_llm=False)
+    out_dir = tmp_path / "chosen_exports"
+
+    result = service.export_article("WEB_TEST", "ART_WEB", "csv", str(out_dir))
+    summaries = service.trace_records("WEB_TEST")
+
+    assert result["records"] == 47
+    assert Path(result["path"]).parent == out_dir
+    assert Path(result["path"]).is_file()
+    assert summaries["total"] == 47
+    db = pm.get_database("WEB_TEST")
+    try:
+        job = db.fetch_one("SELECT * FROM export_jobs WHERE article_id = 'ART_WEB'")
+        assert job["output_path"] == result["path"]
+        assert job["record_count"] == 47
+    finally:
+        db.close()

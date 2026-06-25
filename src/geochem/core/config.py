@@ -10,7 +10,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 
-DEFAULT_PROJECT_DIR = Path.home() / "GeoChem_Projects"
+DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[3] / "geochem-data"
 
 
 class ModelPricing(BaseModel):

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { Document, Page, pdfjs } from 'react-pdf'
@@ -272,8 +272,11 @@ export function StandardizedPage() {
   const queryClient = useQueryClient()
   const articles = useQuery({ queryKey: ['articles', projectId], queryFn: () => api.articles(projectId), enabled: Boolean(projectId) })
   const [filterArticle, setFilterArticle] = useState('')
+  const [exportDir, setExportDir] = useState('')
+  const [exportMessage, setExportMessage] = useState('')
   const aid = filterArticle || articleId
   const data = useQuery({ queryKey: ['standardized', projectId, aid], queryFn: () => api.standardized(projectId), enabled: Boolean(projectId) })
+  const exportDirectory = useQuery({ queryKey: ['export-directory', projectId], queryFn: () => api.exportDirectory(projectId), enabled: Boolean(projectId) })
   const rows = (data.data || []).filter((r: Record<string,unknown>) => !aid || r.article_id === aid)
   const SKIP_KEYS = new Set(['quality_grade', 'record_id', 'article_id', 'table_id', 'row_id', 'processed_at', 'data', 'original_fields', 'original_values', 'mapped_fields', 'confidence_scores', 'review_statuses', 'source_file', 'source_table', 'source_row', 'reference', 'doi', 'mapping_rule_ids', 'calculation_ids', 'mapped_units', 'original_units'])
   const fields = useMemo(() => {
@@ -288,10 +291,37 @@ export function StandardizedPage() {
   }, [rows])
   const flattened = rows.map((row: Record<string,unknown>) => ({...(row.data as object)}))
 
+  useEffect(() => {
+    if (exportDirectory.data?.path && !exportDir) setExportDir(exportDirectory.data.path)
+  }, [exportDir, exportDirectory.data?.path])
+
+  const saveExportDir = async () => {
+    await api.saveExportDirectory(exportDir === exportDirectory.data?.path && exportDirectory.data?.is_default ? '' : exportDir)
+    await queryClient.invalidateQueries({ queryKey: ['export-directory', projectId] })
+    setExportMessage('导出目录已保存。')
+  }
+
+  const resetExportDir = async () => {
+    await api.saveExportDirectory('')
+    setExportDir('')
+    await queryClient.invalidateQueries({ queryKey: ['export-directory', projectId] })
+    setExportMessage('已恢复为当前工作区 output 目录。')
+  }
+
+  const openExportDir = async () => {
+    const result = await api.openExportDirectory(projectId, exportDir)
+    setExportMessage(`已打开目录：${result.path}`)
+  }
+
   const doExport = async (format: string) => {
     if (!aid) return
-    const result = await api.exportArticle(projectId, aid, format)
-    alert(`已导出 ${result.records} 条记录到 ${result.path}`)
+    const result = await api.exportArticle(projectId, aid, format, exportDir)
+    setExportMessage(`已导出 ${result.records} 条记录到 ${result.path}`)
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['standardized', projectId] }),
+      queryClient.invalidateQueries({ queryKey: ['trace-records', projectId] }),
+      queryClient.invalidateQueries({ queryKey: ['dashboard', projectId] }),
+    ])
   }
 
   return <div className="page"><PageHeader title="标准化导出" subtitle="仅展示满足审核和质量要求的记录，导出时保留完整用户表头。"
@@ -300,6 +330,17 @@ export function StandardizedPage() {
       <button className="primary-button" onClick={() => doExport('csv')}><Download size={16}/> CSV</button>
       <button className="primary-button" onClick={() => doExport('xlsx')}><Download size={16}/> XLSX</button>
     </div>} />
+    <section className="panel export-directory-card">
+      <div className="panel-heading"><strong>导出目录</strong><span>{exportDirectory.data?.is_default ? '默认' : '自定义'}</span></div>
+      <div className="export-directory-row">
+        <input value={exportDir} onChange={(event) => setExportDir(event.target.value)} placeholder="默认使用当前工作区 output 目录" />
+        <button onClick={saveExportDir}>保存目录</button>
+        <button onClick={resetExportDir}>恢复默认</button>
+        <button onClick={openExportDir}>打开目录</button>
+      </div>
+      <p className="card-desc">导出只会在此目录生成一个标准化 CSV 或 XLSX 文件；溯源、审核和计算记录保存在项目数据库中，不额外创建复杂文件夹。</p>
+      {exportMessage && <p className="form-success">{exportMessage}</p>}
+    </section>
     <section className="panel"><SimpleTable rows={flattened} columns={fields.map((field) => ({key:field,label:field}))} /></section>
   </div>
 }
@@ -347,25 +388,56 @@ export function CostPage() {
 export function SettingsPage() {
   const queryClient = useQueryClient()
   const settings = useQuery({ queryKey: ['settings'], queryFn: api.settings })
+  const [textProvider, setTextProvider] = useState('')
   const [textModel, setTextModel] = useState('')
+  const [visionProvider, setVisionProvider] = useState('')
   const [visionModel, setVisionModel] = useState('')
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({})
+  const [liveModels, setLiveModels] = useState<Record<string, {name:string;display_name:string;supports_vision:boolean}[]>>({})
+  const [testing, setTesting] = useState<Record<string, string>>({})
   const [activeTab, setActiveTab] = useState('model')
-  const [testResult, setTestResult] = useState<Record<string, string>>({})
-  const textOptions = settings.data?.providers.flatMap((p: any) => p.models.map((m: any) => ({ value: `${p.name}/${m.name}`, label: `${p.display_name} / ${m.display_name}`}))) || []
-  const visionOptions = settings.data?.providers.flatMap((p: any) => p.models.filter((m:any)=>m.supports_vision).map((m: any) => ({ value: `${p.name}/${m.name}`, label: `${p.display_name} / ${m.display_name}`}))) || []
-  const selectedText = textModel || (settings.data ? `${settings.data.default_provider}/${settings.data.default_model}` : '')
-  const selectedVision = visionModel || (settings.data?.vision_provider ? `${settings.data.vision_provider}/${settings.data.vision_model}` : '')
+
+  const providers = settings.data?.providers || []
+  const selectedText = textProvider || settings.data?.default_provider || ''
+  const selectedVision = visionProvider || settings.data?.vision_provider || ''
+  const textModelSel = textModel || settings.data?.default_model || ''
+  const visionModelSel = visionModel || settings.data?.vision_model || ''
+
+  const getModels = (providerName: string) => {
+    if (liveModels[providerName]) return liveModels[providerName]
+    const p = providers.find((x: any) => x.name === providerName)
+    return p?.models || []
+  }
 
   const setKey = (provider: string, value: string) => setApiKeys(prev => ({...prev, [provider]: value}))
 
+  const testConnection = async (providerName: string) => {
+    const key = apiKeys[providerName]
+    if (!key) { alert('请先输入 API Key'); return }
+    setTesting(prev => ({...prev, [providerName]: 'testing'}))
+    try {
+      const result = await api.testProvider(providerName, key)
+      if (result.success) {
+        setLiveModels(prev => ({...prev, [providerName]: result.models}))
+        setTesting(prev => ({...prev, [providerName]: 'ok'}))
+      } else {
+        setTesting(prev => ({...prev, [providerName]: 'fail'}))
+      }
+    } catch {
+      setTesting(prev => ({...prev, [providerName]: 'fail'}))
+    }
+  }
+
   const save = async () => {
-    const [dp, ...dr] = selectedText.split('/')
-    const [vp, ...vr] = selectedVision.split('/')
     const keys: Record<string, string> = {}
     for (const [n, v] of Object.entries(apiKeys)) { if (v) keys[n] = v }
-    await api.saveSettings({default_provider:dp,default_model:dr.join('/'),vision_provider:vp||'',vision_model:vr.join('/'),api_keys:keys})
-    setApiKeys({}); queryClient.invalidateQueries({queryKey:['settings']})
+    await api.saveSettings({
+      default_provider: selectedText, default_model: textModelSel,
+      vision_provider: selectedVision, vision_model: visionModelSel,
+      api_keys: keys,
+    })
+    setApiKeys({}); setLiveModels({}); setTesting({})
+    queryClient.invalidateQueries({queryKey:['settings']})
   }
 
   const TABS = [
@@ -374,7 +446,7 @@ export function SettingsPage() {
     { key: 'service', label: '本地服务', icon: '🖥' },
   ]
 
-  return <div className="page"><PageHeader title="设置" subtitle="配置模型、API Key 和任务路由。" action={<button className="primary-button" onClick={save}>保存所有设置</button>} />
+  return <div className="page"><PageHeader title="设置" subtitle="选择服务商、输入 Key、测试连接、选择模型。" action={<button className="primary-button" onClick={save}>保存所有设置</button>} />
     <div className="settings-layout">
       <nav className="panel settings-nav">
         {TABS.map(tab => <button key={tab.key} className={activeTab === tab.key ? 'active' : ''} onClick={() => setActiveTab(tab.key)}>
@@ -382,35 +454,72 @@ export function SettingsPage() {
         </button>)}
       </nav>
       <div className="settings-body">
-        {activeTab === 'model' && <section className="panel settings-card">
-          <h2>🧠 模型任务路由</h2>
-          <p className="card-desc">为不同类型的任务选择最合适的模型。文本模型用于字段映射和规则学习，视觉模型用于图像抽取。</p>
-          <div className="setting-item">
-            <div className="setting-label"><strong>默认文本模型</strong><span>字段映射、段落抽取和规则学习</span></div>
-            <select value={selectedText} onChange={(e)=>setTextModel(e.target.value)}>{textOptions.map((o:any)=><option key={o.value} value={o.value}>{o.label}</option>)}</select>
-          </div>
-          <div className="setting-item">
-            <div className="setting-label"><strong>图像抽取模型</strong><span>必须选择 supports_vision 的模型</span></div>
-            <select value={selectedVision} onChange={(e)=>setVisionModel(e.target.value)}><option value="">未配置</option>{visionOptions.map((o:any)=><option key={o.value} value={o.value}>{o.label}</option>)}</select>
-          </div>
-        </section>}
+
+        {activeTab === 'model' && <>
+          <section className="panel settings-card">
+            <h2>🧠 默认文本模型</h2>
+            <p className="card-desc">字段映射、段落抽取和规则学习使用此模型。</p>
+            <div className="model-select-row">
+              <div className="model-select-item">
+                <label>服务商</label>
+                <select value={selectedText} onChange={(e) => { setTextProvider(e.target.value); setTextModel('') }}>
+                  {providers.map((p: any) => <option key={p.name} value={p.name}>{p.display_name}</option>)}
+                </select>
+              </div>
+              <div className="model-select-item">
+                <label>模型 <small style={{color:'#53637a',fontWeight:400}}>可手动输入</small></label>
+                <input type="text" list="text-models" value={textModelSel} onChange={(e) => setTextModel(e.target.value)} placeholder="选择或输入模型名称..." />
+                <datalist id="text-models">
+                  {getModels(selectedText).map((m: any) => <option key={m.name} value={m.name}>{m.display_name || m.name}</option>)}
+                </datalist>
+              </div>
+            </div>
+          </section>
+
+          <section className="panel settings-card">
+            <h2>👁 图像抽取模型</h2>
+            <p className="card-desc">用于从图表中提取数据，必须选择支持 vision 的模型。</p>
+            <div className="model-select-row">
+              <div className="model-select-item">
+                <label>服务商</label>
+                <select value={selectedVision} onChange={(e) => { setVisionProvider(e.target.value); setVisionModel('') }}>
+                  <option value="">未配置</option>
+                  {providers.map((p: any) => <option key={p.name} value={p.name}>{p.display_name}</option>)}
+                </select>
+              </div>
+              <div className="model-select-item">
+                <label>模型 <small style={{color:'#53637a',fontWeight:400}}>可手动输入</small></label>
+                <input type="text" list="vision-models" value={visionModelSel} onChange={(e) => setVisionModel(e.target.value)} placeholder="选择或输入模型名称..." />
+                <datalist id="vision-models">
+                  {getModels(selectedVision).filter((m: any) => m.supports_vision).map((m: any) => <option key={m.name} value={m.name}>{m.display_name || m.name}</option>)}
+                </datalist>
+              </div>
+            </div>
+          </section>
+        </>}
 
         {activeTab === 'keys' && <section className="panel settings-card">
           <h2>🔑 API Key 管理</h2>
-          <p className="card-desc">密钥保存在本地 config/settings.yaml，不会发送到外部。留空则保持现有值。</p>
+          <p className="card-desc">输入 Key 后点击"测试"验证连通性并自动加载可用模型列表。</p>
           <div className="key-grid">
-            {(settings.data?.providers || []).map((provider: any) => {
+            {providers.map((provider: any) => {
               const statusColor = provider.key_status === 'configured' ? '#027a48' : provider.key_status === 'missing' ? '#d92d20' : '#53637a'
               const statusLabel = provider.key_status === 'configured' ? '已配置' : provider.key_status === 'missing' ? '未配置' : provider.key_status
+              const testState = testing[provider.name]
               return <div className="key-card" key={provider.name}>
                 <div className="key-card-header">
                   <strong>{provider.display_name}</strong>
                   <span className="key-status" style={{color: statusColor}}>{statusLabel}</span>
                 </div>
-                <input type="password" placeholder="sk-..." value={apiKeys[provider.name] || ''} onChange={(e) => setKey(provider.name, e.target.value)} />
+                <div className="key-input-row">
+                  <input type="password" placeholder="sk-..." value={apiKeys[provider.name] || ''} onChange={(e) => setKey(provider.name, e.target.value)} />
+                  <button className={`test-btn ${testState === 'ok' ? 'success' : testState === 'fail' ? 'fail' : ''}`} onClick={() => testConnection(provider.name)} disabled={testState === 'testing'}>
+                    {testState === 'testing' ? '...' : testState === 'ok' ? '✓' : testState === 'fail' ? '✗' : '测试'}
+                  </button>
+                </div>
                 <div className="key-card-footer">
                   <small>{provider.env_name ? `ENV: ${provider.env_name}` : '直接配置'}</small>
-                  <small>{provider.models.length} 个模型</small>
+                  <small>{(liveModels[provider.name] || provider.models).length} 个模型</small>
                 </div>
               </div>
             })}
@@ -419,13 +528,14 @@ export function SettingsPage() {
 
         {activeTab === 'service' && <section className="panel settings-card">
           <h2>🖥 本地服务</h2>
-          <p className="card-desc">GeoChem 本地服务器状态和配置。</p>
+          <p className="card-desc">GeoChem 本地服务器状态。</p>
           <div className="service-status">
             <div className="status-row"><span className="status-dot online" /><strong>服务运行中</strong><code>127.0.0.1:8765</code></div>
-            <div className="status-row"><span>安全模式</span><span>仅本机访问，无外部暴露</span></div>
+            <div className="status-row"><span>安全模式</span><span>仅本机访问</span></div>
             <div className="status-row"><span>数据库</span><span>SQLite WAL 模式</span></div>
           </div>
         </section>}
+
       </div>
     </div>
   </div>

@@ -32,7 +32,7 @@ export function TracePage() {
   const records = recordsQuery.data?.items || []
 
   useEffect(() => {
-    if (records.length && !records.some((record) => record.record_id === activeRecordId)) setActiveRecordId(records[0].record_id)
+    if (records.length && !records.some((record: TraceRecordSummary) => record.record_id === activeRecordId)) setActiveRecordId(records[0].record_id)
     if (!records.length) setActiveRecordId('')
   }, [activeRecordId, records])
 
@@ -50,7 +50,7 @@ export function TracePage() {
     }
     return [...groups.entries()]
   }, [records])
-  const fields = useMemo(() => (detailQuery.data?.fields || []).filter((field) => !fieldQuery || `${field.target_header} ${field.value} ${field.original_value}`.toLowerCase().includes(fieldQuery.toLowerCase())), [detailQuery.data?.fields, fieldQuery])
+  const fields = useMemo(() => (detailQuery.data?.fields || []).filter((field: TraceField) => !fieldQuery || `${field.target_header} ${field.value} ${field.original_value}`.toLowerCase().includes(fieldQuery.toLowerCase())), [detailQuery.data?.fields, fieldQuery])
   const evidence = (activeField?.source || activeSource) as PdfEvidence | null
 
   const selectRecord = (record: TraceRecordSummary, source?: EvidenceSource) => {
@@ -91,7 +91,7 @@ export function TracePage() {
       <section className="panel trace-value-panel">
         <div className="panel-heading"><strong>{detailQuery.data ? `${detailQuery.data.sample_id || detailQuery.data.record_id} 的值` : '字段值'}</strong><span>{fields.length}</span></div>
         <div className="trace-field-search"><Search size={14}/><input value={fieldQuery} onChange={(event) => setFieldQuery(event.target.value)} placeholder="搜索字段或值"/></div>
-        <div className="trace-field-list">{fields.map((field) => <button key={field.target_header} className={activeField?.target_header === field.target_header ? 'active' : ''} onClick={() => { setActiveField(field); setActiveSource(field.source || null) }}>
+        <div className="trace-field-list">{fields.map((field: TraceField) => <button key={field.target_header} className={activeField?.target_header === field.target_header ? 'active' : ''} onClick={() => { setActiveField(field); setActiveSource(field.source || null) }}>
           <div><strong>{field.target_header}</strong><span>{field.value || '—'} {field.target_unit}</span></div>
           <small>原始：{field.original_value || '—'} {field.original_unit} · {field.review_status || '未知状态'}</small>
           <em className={field.source_complete ? 'complete' : 'incomplete'}>{field.source ? `${sourceLabel(field.source.element_type)} p${field.source.page_number || '?'}` : '来源不完整'}</em>

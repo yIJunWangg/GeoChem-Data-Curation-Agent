@@ -14,9 +14,11 @@ from ..core.exceptions import LLMError, ProviderNotFoundError
 from ..core.logging_config import get_logger
 from ..core.models import LLMCallRecord, LLMResponse
 from .anthropic_provider import AnthropicProvider
+from .google_provider import GoogleProvider
 from .ollama_provider import OllamaProvider
 from .openai_provider import OpenAIProvider
 from .registry import ProviderRegistry, get_registry
+from .zhipu_provider import ZhipuProvider
 
 logger = get_logger("llm_client")
 
@@ -38,9 +40,11 @@ class LLMClient:
         """Register built-in provider classes."""
         self.registry.register_class("openai", OpenAIProvider)
         self.registry.register_class("anthropic", AnthropicProvider)
+        self.registry.register_class("google", GoogleProvider)
+        self.registry.register_class("zhipu", ZhipuProvider)
         # OpenAI-compatible providers
         for name in ("deepseek", "moonshot", "qwen", "xiaomi", "openrouter",
-                     "zhipu", "minimax", "doubao", "baichuan", "hunyuan", "yi", "stepfun"):
+                     "minimax", "doubao", "baichuan", "hunyuan", "yi", "stepfun"):
             self.registry.register_class(name, OpenAIProvider)
         self.registry.register_class("xiaomi-anthropic", AnthropicProvider)
         self.registry.register_class("ollama", OllamaProvider)
@@ -68,7 +72,11 @@ class LLMClient:
 
             # Determine which class to use
             class_name = provider_name
-            if prov_config.api_format == "openai" and provider_name not in ("openai", "ollama"):
+            # Prefer native provider class if registered (google, zhipu, anthropic, ollama)
+            native_classes = {"google", "zhipu", "anthropic", "ollama"}
+            if provider_name in native_classes and self.registry.is_registered(provider_name):
+                class_name = provider_name
+            elif prov_config.api_format == "openai" and provider_name not in ("openai", "ollama"):
                 class_name = "openai"  # Use OpenAI-compatible class
 
             if self.registry.is_registered(class_name) or class_name in self.registry._provider_classes:
