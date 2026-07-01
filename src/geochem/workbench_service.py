@@ -172,6 +172,9 @@ class WorkbenchService:
         finally:
             db.close()
 
+    # Toggle: True = Docling, False = legacy pdfplumber+PyMuPDF
+    USE_DOCLING = True
+
     def _discover_pdf(
         self,
         db,
@@ -182,6 +185,66 @@ class WorkbenchService:
         targets: list[dict[str, Any]],
         progress: ProgressCallback | None,
     ) -> dict[str, int]:
+        if self.USE_DOCLING:
+            return self._discover_pdf_docling(db, project_id, article_id, resource, pdf_path, targets, progress)
+        return self._discover_pdf_legacy(db, project_id, article_id, resource, pdf_path, targets, progress)
+
+    def _discover_pdf_docling(
+        self,
+        db,
+        project_id: str,
+        article_id: str,
+        resource: dict[str, Any],
+        pdf_path: Path,
+        targets: list[dict[str, Any]],
+        progress: ProgressCallback | None,
+    ) -> dict[str, int]:
+        """Docling-based PDF discovery."""
+        from .extractors.docling_reader import DoclingReader
+
+        db.execute(
+            "UPDATE document_elements SET status = 'stale', updated_at = ? "
+            "WHERE resource_id = ? AND parser_version != 'manual'",
+            (datetime.now().isoformat(), resource["resource_id"]),
+        )
+        db.commit()
+        if progress:
+            progress("Docling 正在解析 PDF...", 0.1)
+
+        schema_fields = [t["display_header"] for t in targets]
+        reader = DoclingReader()
+        blocks = reader.read(pdf_path, schema_fields=schema_fields)
+
+        totals = {"table": 0, "figure": 0, "paragraph": 0}
+        for i, block in enumerate(blocks):
+            self._upsert_element(
+                db, project_id, article_id, resource["resource_id"],
+                block.block_type, block.page_number, block.bbox,
+                block.text[:12000], block.text[:20000], block.caption[:3000],
+                block.preview_path, block.table_data or {}, block.matched_headers, block.relevance_score,
+                parser_version="docling-v1",
+            )
+            totals[block.block_type] = totals.get(block.block_type, 0) + 1
+            if (i + 1) % 20 == 0:
+                db.commit()
+                if progress:
+                    progress(f"Docling 已处理 {i+1}/{len(blocks)} 个块", 0.1 + 0.8*((i+1)/max(1,len(blocks))))
+        db.commit()
+        if progress:
+            progress(f"Docling 完成: {totals['table']} 表格, {totals['figure']} 图片, {totals['paragraph']} 段落", 1.0, totals)
+        return totals
+
+    def _discover_pdf_legacy(
+        self,
+        db,
+        project_id: str,
+        article_id: str,
+        resource: dict[str, Any],
+        pdf_path: Path,
+        targets: list[dict[str, Any]],
+        progress: ProgressCallback | None,
+    ) -> dict[str, int]:
+        """Legacy pdfplumber+PyMuPDF discovery."""
         import fitz
 
         # Keep referenced evidence available for old candidate-cell trace records.
