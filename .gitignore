@@ -6,6 +6,7 @@ __pycache__/
 .pytest_cache/
 secret.txt
 config/settings.yaml
+config/settings.local.yaml
 .venv/
 *.db
 *.sqlite
@@ -20,4 +21,3 @@ tests/
 .DS_Store
 geochem-data/
 output/
-

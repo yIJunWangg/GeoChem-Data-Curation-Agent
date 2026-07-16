@@ -1,84 +1,3434 @@
 default_project_dir: /Users/wanghaha/vscode_workspace/macos app/GeoChem Data Curation
   Agent/geochem-data
 providers:
-- name: anthropic
-  display_name: Anthropic
-  api_key: null
-  base_url: null
-  api_format: native
+- name: deepseek-openai
+  display_name: DeepSeek (OpenAI-compatible)
+  api_key: ${DEEPSEEK_API_KEY}
+  base_url: https://api.deepseek.com
+  api_format: openai
   enabled: true
   models:
-  - name: claude-sonnet-4-20250514
-    display_name: Claude Sonnet 4
+  - name: deepseek-v4-flash
+    display_name: DeepSeek V4 Flash
     max_tokens: 8192
     supports_streaming: true
-    supports_vision: true
+    supports_vision: false
     pricing:
-      input_price: 0.003
-      output_price: 0.015
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: deepseek-v4-pro
+    display_name: DeepSeek V4 Pro
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: deepseek-chat
+    display_name: DeepSeek Chat (deprecated 2026-07-24)
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: deepseek-reasoner
+    display_name: DeepSeek Reasoner (deprecated 2026-07-24)
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  default_headers: {}
+  is_custom: false
+  auth_type: bearer
+  api_key_header: Authorization
+  provider_kind: preset
+- name: deepseek-anthropic
+  display_name: DeepSeek (Anthropic-compatible)
+  api_key: ${DEEPSEEK_API_KEY}
+  base_url: https://api.deepseek.com/anthropic
+  api_format: anthropic
+  enabled: true
+  models:
+  - name: deepseek-v4-flash
+    display_name: DeepSeek V4 Flash
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: deepseek-v4-pro
+    display_name: DeepSeek V4 Pro
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  default_headers: {}
+  is_custom: false
+  auth_type: bearer
+  api_key_header: Authorization
+  provider_kind: preset
+- name: opencode-go-openai
+  display_name: OpenCode Go (OpenAI-compatible)
+  api_key: ${OPENCODE_GO_API_KEY}
+  base_url: https://opencode.ai/zen/go/v1
+  api_format: openai
+  enabled: true
+  models:
+  - name: glm-5.2
+    display_name: GLM-5.2
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: glm-5.1
+    display_name: GLM-5.1
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: kimi-k2.7-code
+    display_name: Kimi K2.7 Code
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: kimi-k2.6
+    display_name: Kimi K2.6
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: deepseek-v4-pro
+    display_name: DeepSeek V4 Pro
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: deepseek-v4-flash
+    display_name: DeepSeek V4 Flash
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: mimo-v2.5
+    display_name: MiMo V2.5
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: mimo-v2.5-pro
+    display_name: MiMo V2.5 Pro
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: minimax-m3
+    display_name: minimax-m3
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: minimax-m2.7
+    display_name: minimax-m2.7
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: minimax-m2.5
+    display_name: minimax-m2.5
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: kimi-k2.5
+    display_name: kimi-k2.5
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: glm-5
+    display_name: glm-5
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen3.7-max
+    display_name: qwen3.7-max
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen3.7-plus
+    display_name: qwen3.7-plus
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen3.6-plus
+    display_name: qwen3.6-plus
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen3.5-plus
+    display_name: qwen3.5-plus
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: mimo-v2-pro
+    display_name: mimo-v2-pro
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: mimo-v2-omni
+    display_name: mimo-v2-omni
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: hy3-preview
+    display_name: hy3-preview
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  default_headers: {}
+  is_custom: false
+  auth_type: bearer
+  api_key_header: Authorization
+  provider_kind: preset
+- name: opencode-go-anthropic
+  display_name: OpenCode Go (Anthropic-compatible)
+  api_key: ${OPENCODE_GO_API_KEY}
+  base_url: https://opencode.ai/zen/go/v1
+  api_format: anthropic
+  enabled: true
+  models:
+  - name: minimax-m3
+    display_name: MiniMax M3
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: minimax-m2.7
+    display_name: MiniMax M2.7
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: minimax-m2.5
+    display_name: MiniMax M2.5
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen3.7-max
+    display_name: Qwen3.7 Max
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen3.7-plus
+    display_name: Qwen3.7 Plus
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen3.6-plus
+    display_name: Qwen3.6 Plus
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: claude-opus-4-7
+    display_name: Claude Opus 4.7
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: claude-sonnet-4-20250514
+    display_name: Claude Sonnet 4
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
       cached_input_price: 0.0
   - name: claude-haiku-4-5-20251001
     display_name: Claude Haiku 4.5
-    max_tokens: 8192
+    max_tokens: 4096
     supports_streaming: true
-    supports_vision: true
+    supports_vision: false
     pricing:
-      input_price: 0.0008
-      output_price: 0.004
+      input_price: 0.0
+      output_price: 0.0
       cached_input_price: 0.0
   default_headers: {}
-- name: openai
-  display_name: OpenAI
-  api_key: null
-  base_url: null
+  is_custom: false
+  auth_type: bearer
+  api_key_header: Authorization
+  provider_kind: preset
+- name: openrouter
+  display_name: OpenRouter
+  api_key: ${OPENROUTER_API_KEY}
+  base_url: https://openrouter.ai/api/v1
   api_format: openai
   enabled: true
   models:
-  - name: gpt-4o
-    display_name: GPT-4o
-    max_tokens: 16384
-    supports_streaming: true
-    supports_vision: true
-    pricing:
-      input_price: 0.0025
-      output_price: 0.01
-      cached_input_price: 0.0
-  - name: gpt-4o-mini
-    display_name: GPT-4o Mini
-    max_tokens: 16384
-    supports_streaming: true
-    supports_vision: true
-    pricing:
-      input_price: 0.00015
-      output_price: 0.0006
-      cached_input_price: 0.0
-  default_headers: {}
-- name: deepseek
-  display_name: DeepSeek
-  api_key: null
-  base_url: https://api.deepseek.com/v1
-  api_format: openai
-  enabled: true
-  models:
-  - name: deepseek-chat
-    display_name: DeepSeek V3
+  - name: openai/gpt-4o-mini
+    display_name: OpenAI GPT-4o Mini
     max_tokens: 8192
     supports_streaming: true
     supports_vision: false
     pricing:
-      input_price: 0.00014
-      output_price: 0.00028
+      input_price: 0.0
+      output_price: 0.0
       cached_input_price: 0.0
-  - name: deepseek-reasoner
-    display_name: DeepSeek R1
+  - name: anthropic/claude-3.5-sonnet
+    display_name: Claude 3.5 Sonnet
     max_tokens: 8192
     supports_streaming: true
     supports_vision: false
     pricing:
-      input_price: 0.00055
-      output_price: 0.00219
+      input_price: 0.0
+      output_price: 0.0
       cached_input_price: 0.0
-  default_headers: {}
+  - name: deepseek/deepseek-chat
+    display_name: DeepSeek Chat
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen-2.5-72b-instruct
+    display_name: Qwen 2.5 72B Instruct
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: anthropic/claude-sonnet-5
+    display_name: anthropic/claude-sonnet-5
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: google/gemini-3.1-flash-lite-image
+    display_name: google/gemini-3.1-flash-lite-image
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: sakana/fugu-ultra
+    display_name: sakana/fugu-ultra
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: google/gemini-3.1-flash-image
+    display_name: google/gemini-3.1-flash-image
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: google/gemini-3-pro-image
+    display_name: google/gemini-3-pro-image
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: cohere/north-mini-code:free
+    display_name: cohere/north-mini-code:free
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: z-ai/glm-5.2
+    display_name: z-ai/glm-5.2
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openrouter/fusion
+    display_name: openrouter/fusion
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: moonshotai/kimi-k2.7-code
+    display_name: moonshotai/kimi-k2.7-code
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: ~anthropic/claude-fable-latest
+    display_name: ~anthropic/claude-fable-latest
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: anthropic/claude-fable-5
+    display_name: anthropic/claude-fable-5
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: nex-agi/nex-n2-pro
+    display_name: nex-agi/nex-n2-pro
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: nvidia/nemotron-3.5-content-safety:free
+    display_name: nvidia/nemotron-3.5-content-safety:free
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: nvidia/nemotron-3-ultra-550b-a55b:free
+    display_name: nvidia/nemotron-3-ultra-550b-a55b:free
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: nvidia/nemotron-3-ultra-550b-a55b
+    display_name: nvidia/nemotron-3-ultra-550b-a55b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3.7-plus
+    display_name: qwen/qwen3.7-plus
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: minimax/minimax-m3
+    display_name: minimax/minimax-m3
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: stepfun/step-3.7-flash
+    display_name: stepfun/step-3.7-flash
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: anthropic/claude-opus-4.8-fast
+    display_name: anthropic/claude-opus-4.8-fast
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: anthropic/claude-opus-4.8
+    display_name: anthropic/claude-opus-4.8
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3.7-max
+    display_name: qwen/qwen3.7-max
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: x-ai/grok-build-0.1
+    display_name: x-ai/grok-build-0.1
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: google/gemini-3.5-flash
+    display_name: google/gemini-3.5-flash
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: anthropic/claude-opus-4.7-fast
+    display_name: anthropic/claude-opus-4.7-fast
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: perceptron/perceptron-mk1
+    display_name: perceptron/perceptron-mk1
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: inclusionai/ring-2.6-1t
+    display_name: inclusionai/ring-2.6-1t
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: google/gemini-3.1-flash-lite
+    display_name: google/gemini-3.1-flash-lite
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-chat-latest
+    display_name: openai/gpt-chat-latest
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: x-ai/grok-4.3
+    display_name: x-ai/grok-4.3
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: ibm-granite/granite-4.1-8b
+    display_name: ibm-granite/granite-4.1-8b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: mistralai/mistral-medium-3-5
+    display_name: mistralai/mistral-medium-3-5
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free
+    display_name: nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: poolside/laguna-xs.2:free
+    display_name: poolside/laguna-xs.2:free
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: poolside/laguna-xs.2
+    display_name: poolside/laguna-xs.2
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: poolside/laguna-m.1:free
+    display_name: poolside/laguna-m.1:free
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: poolside/laguna-m.1
+    display_name: poolside/laguna-m.1
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: ~anthropic/claude-haiku-latest
+    display_name: ~anthropic/claude-haiku-latest
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: ~openai/gpt-mini-latest
+    display_name: ~openai/gpt-mini-latest
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: ~google/gemini-pro-latest
+    display_name: ~google/gemini-pro-latest
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: ~moonshotai/kimi-latest
+    display_name: ~moonshotai/kimi-latest
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: ~google/gemini-flash-latest
+    display_name: ~google/gemini-flash-latest
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: ~anthropic/claude-sonnet-latest
+    display_name: ~anthropic/claude-sonnet-latest
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: ~openai/gpt-latest
+    display_name: ~openai/gpt-latest
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3.5-plus-20260420
+    display_name: qwen/qwen3.5-plus-20260420
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3.6-flash
+    display_name: qwen/qwen3.6-flash
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3.6-35b-a3b
+    display_name: qwen/qwen3.6-35b-a3b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3.6-max-preview
+    display_name: qwen/qwen3.6-max-preview
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3.6-27b
+    display_name: qwen/qwen3.6-27b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-5.5-pro
+    display_name: openai/gpt-5.5-pro
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-5.5
+    display_name: openai/gpt-5.5
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: deepseek/deepseek-v4-pro
+    display_name: deepseek/deepseek-v4-pro
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: deepseek/deepseek-v4-flash
+    display_name: deepseek/deepseek-v4-flash
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: inclusionai/ling-2.6-1t
+    display_name: inclusionai/ling-2.6-1t
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: tencent/hy3-preview
+    display_name: tencent/hy3-preview
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: xiaomi/mimo-v2.5-pro
+    display_name: xiaomi/mimo-v2.5-pro
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: xiaomi/mimo-v2.5
+    display_name: xiaomi/mimo-v2.5
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-5.4-image-2
+    display_name: openai/gpt-5.4-image-2
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: inclusionai/ling-2.6-flash
+    display_name: inclusionai/ling-2.6-flash
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: ~anthropic/claude-opus-latest
+    display_name: ~anthropic/claude-opus-latest
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openrouter/pareto-code
+    display_name: openrouter/pareto-code
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: moonshotai/kimi-k2.6
+    display_name: moonshotai/kimi-k2.6
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: anthropic/claude-opus-4.7
+    display_name: anthropic/claude-opus-4.7
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: z-ai/glm-5.1
+    display_name: z-ai/glm-5.1
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: google/gemma-4-26b-a4b-it:free
+    display_name: google/gemma-4-26b-a4b-it:free
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: google/gemma-4-26b-a4b-it
+    display_name: google/gemma-4-26b-a4b-it
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: google/gemma-4-31b-it:free
+    display_name: google/gemma-4-31b-it:free
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: google/gemma-4-31b-it
+    display_name: google/gemma-4-31b-it
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3.6-plus
+    display_name: qwen/qwen3.6-plus
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: z-ai/glm-5v-turbo
+    display_name: z-ai/glm-5v-turbo
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: arcee-ai/trinity-large-thinking
+    display_name: arcee-ai/trinity-large-thinking
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: x-ai/grok-4.20-multi-agent
+    display_name: x-ai/grok-4.20-multi-agent
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: x-ai/grok-4.20
+    display_name: x-ai/grok-4.20
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: google/lyria-3-pro-preview
+    display_name: google/lyria-3-pro-preview
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: google/lyria-3-clip-preview
+    display_name: google/lyria-3-clip-preview
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: kwaipilot/kat-coder-pro-v2
+    display_name: kwaipilot/kat-coder-pro-v2
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: rekaai/reka-edge
+    display_name: rekaai/reka-edge
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: minimax/minimax-m2.7
+    display_name: minimax/minimax-m2.7
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-5.4-nano
+    display_name: openai/gpt-5.4-nano
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-5.4-mini
+    display_name: openai/gpt-5.4-mini
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: mistralai/mistral-small-2603
+    display_name: mistralai/mistral-small-2603
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: z-ai/glm-5-turbo
+    display_name: z-ai/glm-5-turbo
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: nvidia/nemotron-3-super-120b-a12b:free
+    display_name: nvidia/nemotron-3-super-120b-a12b:free
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: nvidia/nemotron-3-super-120b-a12b
+    display_name: nvidia/nemotron-3-super-120b-a12b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: bytedance-seed/seed-2.0-lite
+    display_name: bytedance-seed/seed-2.0-lite
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3.5-9b
+    display_name: qwen/qwen3.5-9b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-5.4-pro
+    display_name: openai/gpt-5.4-pro
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-5.4
+    display_name: openai/gpt-5.4
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: inception/mercury-2
+    display_name: inception/mercury-2
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-5.3-chat
+    display_name: openai/gpt-5.3-chat
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: google/gemini-3.1-flash-lite-preview
+    display_name: google/gemini-3.1-flash-lite-preview
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: bytedance-seed/seed-2.0-mini
+    display_name: bytedance-seed/seed-2.0-mini
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: google/gemini-3.1-flash-image-preview
+    display_name: google/gemini-3.1-flash-image-preview
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3.5-35b-a3b
+    display_name: qwen/qwen3.5-35b-a3b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3.5-27b
+    display_name: qwen/qwen3.5-27b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3.5-122b-a10b
+    display_name: qwen/qwen3.5-122b-a10b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3.5-flash-02-23
+    display_name: qwen/qwen3.5-flash-02-23
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: liquid/lfm-2-24b-a2b
+    display_name: liquid/lfm-2-24b-a2b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: google/gemini-3.1-pro-preview-customtools
+    display_name: google/gemini-3.1-pro-preview-customtools
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-5.3-codex
+    display_name: openai/gpt-5.3-codex
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: aion-labs/aion-2.0
+    display_name: aion-labs/aion-2.0
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: google/gemini-3.1-pro-preview
+    display_name: google/gemini-3.1-pro-preview
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: anthropic/claude-sonnet-4.6
+    display_name: anthropic/claude-sonnet-4.6
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3.5-plus-02-15
+    display_name: qwen/qwen3.5-plus-02-15
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3.5-397b-a17b
+    display_name: qwen/qwen3.5-397b-a17b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: minimax/minimax-m2.5
+    display_name: minimax/minimax-m2.5
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: z-ai/glm-5
+    display_name: z-ai/glm-5
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3-max-thinking
+    display_name: qwen/qwen3-max-thinking
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: anthropic/claude-opus-4.6
+    display_name: anthropic/claude-opus-4.6
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3-coder-next
+    display_name: qwen/qwen3-coder-next
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openrouter/free
+    display_name: openrouter/free
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: stepfun/step-3.5-flash
+    display_name: stepfun/step-3.5-flash
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: moonshotai/kimi-k2.5
+    display_name: moonshotai/kimi-k2.5
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: upstage/solar-pro-3
+    display_name: upstage/solar-pro-3
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: minimax/minimax-m2-her
+    display_name: minimax/minimax-m2-her
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: writer/palmyra-x5
+    display_name: writer/palmyra-x5
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: liquid/lfm-2.5-1.2b-thinking:free
+    display_name: liquid/lfm-2.5-1.2b-thinking:free
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: liquid/lfm-2.5-1.2b-instruct:free
+    display_name: liquid/lfm-2.5-1.2b-instruct:free
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-audio
+    display_name: openai/gpt-audio
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-audio-mini
+    display_name: openai/gpt-audio-mini
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: z-ai/glm-4.7-flash
+    display_name: z-ai/glm-4.7-flash
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-5.2-codex
+    display_name: openai/gpt-5.2-codex
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: bytedance-seed/seed-1.6-flash
+    display_name: bytedance-seed/seed-1.6-flash
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: bytedance-seed/seed-1.6
+    display_name: bytedance-seed/seed-1.6
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: minimax/minimax-m2.1
+    display_name: minimax/minimax-m2.1
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: z-ai/glm-4.7
+    display_name: z-ai/glm-4.7
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: google/gemini-3-flash-preview
+    display_name: google/gemini-3-flash-preview
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: nvidia/nemotron-3-nano-30b-a3b:free
+    display_name: nvidia/nemotron-3-nano-30b-a3b:free
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: nvidia/nemotron-3-nano-30b-a3b
+    display_name: nvidia/nemotron-3-nano-30b-a3b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-5.2-chat
+    display_name: openai/gpt-5.2-chat
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-5.2-pro
+    display_name: openai/gpt-5.2-pro
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-5.2
+    display_name: openai/gpt-5.2
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: mistralai/devstral-2512
+    display_name: mistralai/devstral-2512
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: relace/relace-search
+    display_name: relace/relace-search
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: z-ai/glm-4.6v
+    display_name: z-ai/glm-4.6v
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openrouter/bodybuilder
+    display_name: openrouter/bodybuilder
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-5.1-codex-max
+    display_name: openai/gpt-5.1-codex-max
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: amazon/nova-2-lite-v1
+    display_name: amazon/nova-2-lite-v1
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: mistralai/ministral-14b-2512
+    display_name: mistralai/ministral-14b-2512
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: mistralai/ministral-8b-2512
+    display_name: mistralai/ministral-8b-2512
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: mistralai/ministral-3b-2512
+    display_name: mistralai/ministral-3b-2512
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: mistralai/mistral-large-2512
+    display_name: mistralai/mistral-large-2512
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: arcee-ai/trinity-mini
+    display_name: arcee-ai/trinity-mini
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: deepseek/deepseek-v3.2
+    display_name: deepseek/deepseek-v3.2
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: anthropic/claude-opus-4.5
+    display_name: anthropic/claude-opus-4.5
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: allenai/olmo-3-32b-think
+    display_name: allenai/olmo-3-32b-think
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: google/gemini-3-pro-image-preview
+    display_name: google/gemini-3-pro-image-preview
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: deepcogito/cogito-v2.1-671b
+    display_name: deepcogito/cogito-v2.1-671b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-5.1
+    display_name: openai/gpt-5.1
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-5.1-chat
+    display_name: openai/gpt-5.1-chat
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-5.1-codex
+    display_name: openai/gpt-5.1-codex
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-5.1-codex-mini
+    display_name: openai/gpt-5.1-codex-mini
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: moonshotai/kimi-k2-thinking
+    display_name: moonshotai/kimi-k2-thinking
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: amazon/nova-premier-v1
+    display_name: amazon/nova-premier-v1
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: perplexity/sonar-pro-search
+    display_name: perplexity/sonar-pro-search
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: mistralai/voxtral-small-24b-2507
+    display_name: mistralai/voxtral-small-24b-2507
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-oss-safeguard-20b
+    display_name: openai/gpt-oss-safeguard-20b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: nvidia/nemotron-nano-12b-v2-vl:free
+    display_name: nvidia/nemotron-nano-12b-v2-vl:free
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: minimax/minimax-m2
+    display_name: minimax/minimax-m2
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3-vl-32b-instruct
+    display_name: qwen/qwen3-vl-32b-instruct
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: ibm-granite/granite-4.0-h-micro
+    display_name: ibm-granite/granite-4.0-h-micro
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-5-image-mini
+    display_name: openai/gpt-5-image-mini
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: anthropic/claude-haiku-4.5
+    display_name: anthropic/claude-haiku-4.5
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3-vl-8b-thinking
+    display_name: qwen/qwen3-vl-8b-thinking
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3-vl-8b-instruct
+    display_name: qwen/qwen3-vl-8b-instruct
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-5-image
+    display_name: openai/gpt-5-image
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/o3-deep-research
+    display_name: openai/o3-deep-research
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/o4-mini-deep-research
+    display_name: openai/o4-mini-deep-research
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: nvidia/llama-3.3-nemotron-super-49b-v1.5
+    display_name: nvidia/llama-3.3-nemotron-super-49b-v1.5
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: google/gemini-2.5-flash-image
+    display_name: google/gemini-2.5-flash-image
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3-vl-30b-a3b-thinking
+    display_name: qwen/qwen3-vl-30b-a3b-thinking
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3-vl-30b-a3b-instruct
+    display_name: qwen/qwen3-vl-30b-a3b-instruct
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-5-pro
+    display_name: openai/gpt-5-pro
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: z-ai/glm-4.6
+    display_name: z-ai/glm-4.6
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: anthropic/claude-sonnet-4.5
+    display_name: anthropic/claude-sonnet-4.5
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: deepseek/deepseek-v3.2-exp
+    display_name: deepseek/deepseek-v3.2-exp
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: thedrummer/cydonia-24b-v4.1
+    display_name: thedrummer/cydonia-24b-v4.1
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: relace/relace-apply-3
+    display_name: relace/relace-apply-3
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: google/gemini-2.5-flash-lite-preview-09-2025
+    display_name: google/gemini-2.5-flash-lite-preview-09-2025
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3-vl-235b-a22b-thinking
+    display_name: qwen/qwen3-vl-235b-a22b-thinking
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3-vl-235b-a22b-instruct
+    display_name: qwen/qwen3-vl-235b-a22b-instruct
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3-max
+    display_name: qwen/qwen3-max
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3-coder-plus
+    display_name: qwen/qwen3-coder-plus
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-5-codex
+    display_name: openai/gpt-5-codex
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: deepseek/deepseek-v3.1-terminus
+    display_name: deepseek/deepseek-v3.1-terminus
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3-coder-flash
+    display_name: qwen/qwen3-coder-flash
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3-next-80b-a3b-thinking
+    display_name: qwen/qwen3-next-80b-a3b-thinking
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3-next-80b-a3b-instruct:free
+    display_name: qwen/qwen3-next-80b-a3b-instruct:free
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3-next-80b-a3b-instruct
+    display_name: qwen/qwen3-next-80b-a3b-instruct
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen-plus-2025-07-28:thinking
+    display_name: qwen/qwen-plus-2025-07-28:thinking
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen-plus-2025-07-28
+    display_name: qwen/qwen-plus-2025-07-28
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: nvidia/nemotron-nano-9b-v2:free
+    display_name: nvidia/nemotron-nano-9b-v2:free
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: moonshotai/kimi-k2-0905
+    display_name: moonshotai/kimi-k2-0905
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3-30b-a3b-thinking-2507
+    display_name: qwen/qwen3-30b-a3b-thinking-2507
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: nousresearch/hermes-4-70b
+    display_name: nousresearch/hermes-4-70b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: nousresearch/hermes-4-405b
+    display_name: nousresearch/hermes-4-405b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: deepseek/deepseek-chat-v3.1
+    display_name: deepseek/deepseek-chat-v3.1
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: mistralai/mistral-medium-3.1
+    display_name: mistralai/mistral-medium-3.1
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: z-ai/glm-4.5v
+    display_name: z-ai/glm-4.5v
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: ai21/jamba-large-1.7
+    display_name: ai21/jamba-large-1.7
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-5-chat
+    display_name: openai/gpt-5-chat
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-5
+    display_name: openai/gpt-5
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-5-mini
+    display_name: openai/gpt-5-mini
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-5-nano
+    display_name: openai/gpt-5-nano
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-oss-120b:free
+    display_name: openai/gpt-oss-120b:free
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-oss-120b
+    display_name: openai/gpt-oss-120b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-oss-20b:free
+    display_name: openai/gpt-oss-20b:free
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-oss-20b
+    display_name: openai/gpt-oss-20b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: anthropic/claude-opus-4.1
+    display_name: anthropic/claude-opus-4.1
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: mistralai/codestral-2508
+    display_name: mistralai/codestral-2508
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3-coder-30b-a3b-instruct
+    display_name: qwen/qwen3-coder-30b-a3b-instruct
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3-30b-a3b-instruct-2507
+    display_name: qwen/qwen3-30b-a3b-instruct-2507
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: z-ai/glm-4.5
+    display_name: z-ai/glm-4.5
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: z-ai/glm-4.5-air
+    display_name: z-ai/glm-4.5-air
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3-235b-a22b-thinking-2507
+    display_name: qwen/qwen3-235b-a22b-thinking-2507
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3-coder:free
+    display_name: qwen/qwen3-coder:free
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3-coder
+    display_name: qwen/qwen3-coder
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: bytedance/ui-tars-1.5-7b
+    display_name: bytedance/ui-tars-1.5-7b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: google/gemini-2.5-flash-lite
+    display_name: google/gemini-2.5-flash-lite
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3-235b-a22b-2507
+    display_name: qwen/qwen3-235b-a22b-2507
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: switchpoint/router
+    display_name: switchpoint/router
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: moonshotai/kimi-k2
+    display_name: moonshotai/kimi-k2
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: cognitivecomputations/dolphin-mistral-24b-venice-edition:free
+    display_name: cognitivecomputations/dolphin-mistral-24b-venice-edition:free
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: tencent/hunyuan-a13b-instruct
+    display_name: tencent/hunyuan-a13b-instruct
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: morph/morph-v3-large
+    display_name: morph/morph-v3-large
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: morph/morph-v3-fast
+    display_name: morph/morph-v3-fast
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: baidu/ernie-4.5-vl-424b-a47b
+    display_name: baidu/ernie-4.5-vl-424b-a47b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: mistralai/mistral-small-3.2-24b-instruct
+    display_name: mistralai/mistral-small-3.2-24b-instruct
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: minimax/minimax-m1
+    display_name: minimax/minimax-m1
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: google/gemini-2.5-flash
+    display_name: google/gemini-2.5-flash
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: google/gemini-2.5-pro
+    display_name: google/gemini-2.5-pro
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/o3-pro
+    display_name: openai/o3-pro
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: google/gemini-2.5-pro-preview
+    display_name: google/gemini-2.5-pro-preview
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: deepseek/deepseek-r1-0528
+    display_name: deepseek/deepseek-r1-0528
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: anthropic/claude-opus-4
+    display_name: anthropic/claude-opus-4
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: anthropic/claude-sonnet-4
+    display_name: anthropic/claude-sonnet-4
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: google/gemma-3n-e4b-it
+    display_name: google/gemma-3n-e4b-it
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: mistralai/mistral-medium-3
+    display_name: mistralai/mistral-medium-3
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: google/gemini-2.5-pro-preview-05-06
+    display_name: google/gemini-2.5-pro-preview-05-06
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: arcee-ai/virtuoso-large
+    display_name: arcee-ai/virtuoso-large
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: arcee-ai/coder-large
+    display_name: arcee-ai/coder-large
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: meta-llama/llama-guard-4-12b
+    display_name: meta-llama/llama-guard-4-12b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3-30b-a3b
+    display_name: qwen/qwen3-30b-a3b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3-8b
+    display_name: qwen/qwen3-8b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3-14b
+    display_name: qwen/qwen3-14b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3-32b
+    display_name: qwen/qwen3-32b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen3-235b-a22b
+    display_name: qwen/qwen3-235b-a22b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/o4-mini-high
+    display_name: openai/o4-mini-high
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/o3
+    display_name: openai/o3
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/o4-mini
+    display_name: openai/o4-mini
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-4.1
+    display_name: openai/gpt-4.1
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-4.1-mini
+    display_name: openai/gpt-4.1-mini
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-4.1-nano
+    display_name: openai/gpt-4.1-nano
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: meta-llama/llama-4-maverick
+    display_name: meta-llama/llama-4-maverick
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: meta-llama/llama-4-scout
+    display_name: meta-llama/llama-4-scout
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: deepseek/deepseek-chat-v3-0324
+    display_name: deepseek/deepseek-chat-v3-0324
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/o1-pro
+    display_name: openai/o1-pro
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: mistralai/mistral-small-3.1-24b-instruct
+    display_name: mistralai/mistral-small-3.1-24b-instruct
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: google/gemma-3-4b-it
+    display_name: google/gemma-3-4b-it
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: google/gemma-3-12b-it
+    display_name: google/gemma-3-12b-it
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: cohere/command-a
+    display_name: cohere/command-a
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-4o-mini-search-preview
+    display_name: openai/gpt-4o-mini-search-preview
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-4o-search-preview
+    display_name: openai/gpt-4o-search-preview
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: rekaai/reka-flash-3
+    display_name: rekaai/reka-flash-3
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: google/gemma-3-27b-it
+    display_name: google/gemma-3-27b-it
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: thedrummer/skyfall-36b-v2
+    display_name: thedrummer/skyfall-36b-v2
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: perplexity/sonar-reasoning-pro
+    display_name: perplexity/sonar-reasoning-pro
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: perplexity/sonar-pro
+    display_name: perplexity/sonar-pro
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: perplexity/sonar-deep-research
+    display_name: perplexity/sonar-deep-research
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: mistralai/mistral-saba
+    display_name: mistralai/mistral-saba
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/o3-mini-high
+    display_name: openai/o3-mini-high
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: aion-labs/aion-1.0
+    display_name: aion-labs/aion-1.0
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: aion-labs/aion-1.0-mini
+    display_name: aion-labs/aion-1.0-mini
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: aion-labs/aion-rp-llama-3.1-8b
+    display_name: aion-labs/aion-rp-llama-3.1-8b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen2.5-vl-72b-instruct
+    display_name: qwen/qwen2.5-vl-72b-instruct
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen-plus
+    display_name: qwen/qwen-plus
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/o3-mini
+    display_name: openai/o3-mini
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: mistralai/mistral-small-24b-instruct-2501
+    display_name: mistralai/mistral-small-24b-instruct-2501
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: perplexity/sonar
+    display_name: perplexity/sonar
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: deepseek/deepseek-r1-distill-llama-70b
+    display_name: deepseek/deepseek-r1-distill-llama-70b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: deepseek/deepseek-r1
+    display_name: deepseek/deepseek-r1
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: minimax/minimax-01
+    display_name: minimax/minimax-01
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: microsoft/phi-4
+    display_name: microsoft/phi-4
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: sao10k/l3.1-70b-hanami-x1
+    display_name: sao10k/l3.1-70b-hanami-x1
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: sao10k/l3.3-euryale-70b
+    display_name: sao10k/l3.3-euryale-70b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/o1
+    display_name: openai/o1
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: cohere/command-r7b-12-2024
+    display_name: cohere/command-r7b-12-2024
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: meta-llama/llama-3.3-70b-instruct:free
+    display_name: meta-llama/llama-3.3-70b-instruct:free
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: meta-llama/llama-3.3-70b-instruct
+    display_name: meta-llama/llama-3.3-70b-instruct
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: amazon/nova-lite-v1
+    display_name: amazon/nova-lite-v1
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: amazon/nova-micro-v1
+    display_name: amazon/nova-micro-v1
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: amazon/nova-pro-v1
+    display_name: amazon/nova-pro-v1
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-4o-2024-11-20
+    display_name: openai/gpt-4o-2024-11-20
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: mistralai/mistral-large-2407
+    display_name: mistralai/mistral-large-2407
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen-2.5-coder-32b-instruct
+    display_name: qwen/qwen-2.5-coder-32b-instruct
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: thedrummer/unslopnemo-12b
+    display_name: thedrummer/unslopnemo-12b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: anthracite-org/magnum-v4-72b
+    display_name: anthracite-org/magnum-v4-72b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: qwen/qwen-2.5-7b-instruct
+    display_name: qwen/qwen-2.5-7b-instruct
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: inflection/inflection-3-pi
+    display_name: inflection/inflection-3-pi
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: inflection/inflection-3-productivity
+    display_name: inflection/inflection-3-productivity
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: thedrummer/rocinante-12b
+    display_name: thedrummer/rocinante-12b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: meta-llama/llama-3.2-1b-instruct
+    display_name: meta-llama/llama-3.2-1b-instruct
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: meta-llama/llama-3.2-11b-vision-instruct
+    display_name: meta-llama/llama-3.2-11b-vision-instruct
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: meta-llama/llama-3.2-3b-instruct:free
+    display_name: meta-llama/llama-3.2-3b-instruct:free
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: meta-llama/llama-3.2-3b-instruct
+    display_name: meta-llama/llama-3.2-3b-instruct
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: cohere/command-r-08-2024
+    display_name: cohere/command-r-08-2024
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: cohere/command-r-plus-08-2024
+    display_name: cohere/command-r-plus-08-2024
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: sao10k/l3.1-euryale-70b
+    display_name: sao10k/l3.1-euryale-70b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: nousresearch/hermes-3-llama-3.1-70b
+    display_name: nousresearch/hermes-3-llama-3.1-70b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: nousresearch/hermes-3-llama-3.1-405b:free
+    display_name: nousresearch/hermes-3-llama-3.1-405b:free
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: nousresearch/hermes-3-llama-3.1-405b
+    display_name: nousresearch/hermes-3-llama-3.1-405b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: sao10k/l3-lunaris-8b
+    display_name: sao10k/l3-lunaris-8b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-4o-2024-08-06
+    display_name: openai/gpt-4o-2024-08-06
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: meta-llama/llama-3.1-8b-instruct
+    display_name: meta-llama/llama-3.1-8b-instruct
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: meta-llama/llama-3.1-70b-instruct
+    display_name: meta-llama/llama-3.1-70b-instruct
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: mistralai/mistral-nemo
+    display_name: mistralai/mistral-nemo
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-4o-mini-2024-07-18
+    display_name: openai/gpt-4o-mini-2024-07-18
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: google/gemma-2-27b-it
+    display_name: google/gemma-2-27b-it
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-4o-2024-05-13
+    display_name: openai/gpt-4o-2024-05-13
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-4o
+    display_name: openai/gpt-4o
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: meta-llama/llama-3-8b-instruct
+    display_name: meta-llama/llama-3-8b-instruct
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: mistralai/mixtral-8x22b-instruct
+    display_name: mistralai/mixtral-8x22b-instruct
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: microsoft/wizardlm-2-8x22b
+    display_name: microsoft/wizardlm-2-8x22b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-4-turbo
+    display_name: openai/gpt-4-turbo
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: anthropic/claude-3-haiku
+    display_name: anthropic/claude-3-haiku
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: mistralai/mistral-large
+    display_name: mistralai/mistral-large
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-3.5-turbo-0613
+    display_name: openai/gpt-3.5-turbo-0613
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-4-turbo-preview
+    display_name: openai/gpt-4-turbo-preview
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openrouter/auto
+    display_name: openrouter/auto
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-3.5-turbo-instruct
+    display_name: openai/gpt-3.5-turbo-instruct
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-3.5-turbo-16k
+    display_name: openai/gpt-3.5-turbo-16k
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: mancer/weaver
+    display_name: mancer/weaver
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: undi95/remm-slerp-l2-13b
+    display_name: undi95/remm-slerp-l2-13b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: gryphe/mythomax-l2-13b
+    display_name: gryphe/mythomax-l2-13b
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-3.5-turbo
+    display_name: openai/gpt-3.5-turbo
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  - name: openai/gpt-4
+    display_name: openai/gpt-4
+    max_tokens: 4096
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.0
+      output_price: 0.0
+      cached_input_price: 0.0
+  default_headers:
+    HTTP-Referer: https://github.com/geochem-agent
+    X-Title: GeoChem Data Curation Agent
+  is_custom: false
+  auth_type: bearer
+  api_key_header: Authorization
+  provider_kind: preset
 - name: xiaomi
   display_name: Xiaomi MiMo (OpenAI)
   api_key: ${MIMO_API_KEY}
@@ -114,6 +3464,10 @@ providers:
       output_price: 0.0
       cached_input_price: 0.0
   default_headers: {}
+  is_custom: false
+  auth_type: bearer
+  api_key_header: Authorization
+  provider_kind: preset
 - name: xiaomi-anthropic
   display_name: Xiaomi MiMo (Anthropic)
   api_key: ${MIMO_API_KEY}
@@ -140,52 +3494,100 @@ providers:
       output_price: 0.0
       cached_input_price: 0.0
   default_headers: {}
-- name: openrouter
-  display_name: OpenRouter
-  api_key: ${OPENROUTER_API_KEY}
-  base_url: https://openrouter.ai/api/v1
+  is_custom: false
+  auth_type: bearer
+  api_key_header: Authorization
+  provider_kind: preset
+- name: openai
+  display_name: OpenAI
+  api_key: ${OPENAI_API_KEY}
+  base_url: https://api.openai.com/v1
   api_format: openai
   enabled: true
   models:
-  - name: meta-llama/llama-3.1-8b-instruct:free
-    display_name: Llama 3.1 8B (Free)
-    max_tokens: 8192
+  - name: gpt-4o
+    display_name: GPT-4o
+    max_tokens: 16384
     supports_streaming: true
-    supports_vision: false
+    supports_vision: true
     pricing:
       input_price: 0.0
       output_price: 0.0
       cached_input_price: 0.0
-  - name: google/gemma-2-9b-it:free
-    display_name: Gemma 2 9B (Free)
-    max_tokens: 8192
+  - name: gpt-4o-mini
+    display_name: GPT-4o Mini
+    max_tokens: 16384
     supports_streaming: true
-    supports_vision: false
+    supports_vision: true
     pricing:
       input_price: 0.0
       output_price: 0.0
       cached_input_price: 0.0
-  - name: mistralai/mistral-7b-instruct:free
-    display_name: Mistral 7B (Free)
+  default_headers: {}
+  is_custom: false
+  auth_type: bearer
+  api_key_header: Authorization
+  provider_kind: preset
+- name: anthropic
+  display_name: Anthropic
+  api_key: ${ANTHROPIC_API_KEY}
+  base_url: null
+  api_format: native
+  enabled: true
+  models:
+  - name: claude-sonnet-4-20250514
+    display_name: Claude Sonnet 4
     max_tokens: 8192
     supports_streaming: true
-    supports_vision: false
+    supports_vision: true
     pricing:
       input_price: 0.0
       output_price: 0.0
       cached_input_price: 0.0
-  - name: qwen/qwen-2.5-7b-instruct:free
-    display_name: Qwen 2.5 7B (Free)
+  - name: claude-haiku-4-5-20251001
+    display_name: Claude Haiku 4.5
     max_tokens: 8192
     supports_streaming: true
-    supports_vision: false
+    supports_vision: true
     pricing:
       input_price: 0.0
       output_price: 0.0
       cached_input_price: 0.0
-  default_headers:
-    HTTP-Referer: https://github.com/geochem-agent
-    X-Title: GeoChem Data Curation Agent
+  default_headers: {}
+  is_custom: false
+  auth_type: bearer
+  api_key_header: Authorization
+  provider_kind: preset
+- name: deepseek
+  display_name: DeepSeek
+  api_key: null
+  base_url: https://api.deepseek.com/v1
+  api_format: openai
+  enabled: true
+  models:
+  - name: deepseek-chat
+    display_name: DeepSeek V3
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.00014
+      output_price: 0.00028
+      cached_input_price: 0.0
+  - name: deepseek-reasoner
+    display_name: DeepSeek R1
+    max_tokens: 8192
+    supports_streaming: true
+    supports_vision: false
+    pricing:
+      input_price: 0.00055
+      output_price: 0.00219
+      cached_input_price: 0.0
+  default_headers: {}
+  is_custom: false
+  auth_type: bearer
+  api_key_header: Authorization
+  provider_kind: preset
 - name: qwen
   display_name: Alibaba Qwen (DashScope)
   api_key: ${DASHSCOPE_API_KEY}
@@ -230,10 +3632,14 @@ providers:
       output_price: 0.0
       cached_input_price: 0.0
   default_headers: {}
+  is_custom: false
+  auth_type: bearer
+  api_key_header: Authorization
+  provider_kind: preset
 - name: zhipu
   display_name: Zhipu AI (GLM)
   api_key: null
-  base_url: https://open.bigmodel.cn/api/paas/v4/
+  base_url: https://open.bigmodel.cn/api/paas/v4
   api_format: openai
   enabled: true
   models:
@@ -265,6 +3671,10 @@ providers:
       output_price: 0.0
       cached_input_price: 0.0
   default_headers: {}
+  is_custom: false
+  auth_type: bearer
+  api_key_header: Authorization
+  provider_kind: preset
 - name: minimax
   display_name: MiniMax
   api_key: null
@@ -282,6 +3692,10 @@ providers:
       output_price: 0.0
       cached_input_price: 0.0
   default_headers: {}
+  is_custom: false
+  auth_type: bearer
+  api_key_header: Authorization
+  provider_kind: preset
 - name: moonshot
   display_name: Moonshot (Kimi)
   api_key: null
@@ -317,6 +3731,10 @@ providers:
       output_price: 0.0
       cached_input_price: 0.0
   default_headers: {}
+  is_custom: false
+  auth_type: bearer
+  api_key_header: Authorization
+  provider_kind: preset
 - name: doubao
   display_name: ByteDance Doubao
   api_key: null
@@ -343,6 +3761,10 @@ providers:
       output_price: 0.0
       cached_input_price: 0.0
   default_headers: {}
+  is_custom: false
+  auth_type: bearer
+  api_key_header: Authorization
+  provider_kind: preset
 - name: baichuan
   display_name: Baichuan AI
   api_key: null
@@ -369,6 +3791,10 @@ providers:
       output_price: 0.0
       cached_input_price: 0.0
   default_headers: {}
+  is_custom: false
+  auth_type: bearer
+  api_key_header: Authorization
+  provider_kind: preset
 - name: hunyuan
   display_name: Tencent Hunyuan
   api_key: null
@@ -404,6 +3830,10 @@ providers:
       output_price: 0.0
       cached_input_price: 0.0
   default_headers: {}
+  is_custom: false
+  auth_type: bearer
+  api_key_header: Authorization
+  provider_kind: preset
 - name: yi
   display_name: 01.AI Yi
   api_key: null
@@ -430,6 +3860,10 @@ providers:
       output_price: 0.0
       cached_input_price: 0.0
   default_headers: {}
+  is_custom: false
+  auth_type: bearer
+  api_key_header: Authorization
+  provider_kind: preset
 - name: stepfun
   display_name: StepFun
   api_key: null
@@ -456,6 +3890,10 @@ providers:
       output_price: 0.0
       cached_input_price: 0.0
   default_headers: {}
+  is_custom: false
+  auth_type: bearer
+  api_key_header: Authorization
+  provider_kind: preset
 - name: ollama
   display_name: Ollama (Local)
   api_key: ollama
@@ -464,15 +3902,19 @@ providers:
   enabled: true
   models: []
   default_headers: {}
+  is_custom: false
+  auth_type: bearer
+  api_key_header: Authorization
+  provider_kind: preset
 task_models:
   _default:
-    provider: xiaomi-anthropic
-    model: mimo-v2.5-pro
+    provider: opencode-go-openai
+    model: deepseek-v4-flash
     temperature: 0.1
     max_tokens: 4096
   field_mapping:
-    provider: anthropic
-    model: claude-sonnet-4-20250514
+    provider: opencode-go-openai
+    model: deepseek-v4-flash
     temperature: 0.1
     max_tokens: 4096
   relevance_judge:
@@ -481,15 +3923,25 @@ task_models:
     temperature: 0.0
     max_tokens: 4096
   unit_suggestion:
-    provider: deepseek
-    model: deepseek-chat
-    temperature: 0.0
+    provider: opencode-go-openai
+    model: deepseek-v4-flash
+    temperature: 0.1
     max_tokens: 4096
   data_extraction:
-    provider: anthropic
-    model: claude-sonnet-4-20250514
-    temperature: 0.0
-    max_tokens: 8192
+    provider: opencode-go-openai
+    model: deepseek-v4-flash
+    temperature: 0.1
+    max_tokens: 4096
+  document_record_extraction:
+    provider: opencode-go-openai
+    model: deepseek-v4-flash
+    temperature: 0.1
+    max_tokens: 4096
+  rule_learning:
+    provider: opencode-go-openai
+    model: deepseek-v4-flash
+    temperature: 0.1
+    max_tokens: 4096
 fallback_chain:
 - provider: anthropic
   model: claude-sonnet-4-20250514
@@ -505,3 +3957,10 @@ ui_preferences:
     model: mimo-v2.5-pro
   - provider: openrouter
     model: openrouter/free
+  model_setup:
+    success: true
+    provider: opencode-go-openai
+    provider_preset: opencode-go
+    model: deepseek-v4-flash
+    message: 已保存并应用到全部智能体文本任务
+    last_tested_at: '2026-07-02T15:12:51'

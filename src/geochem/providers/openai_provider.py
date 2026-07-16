@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Any
 
@@ -51,7 +52,7 @@ class OpenAIProvider(BaseProvider):
 
     def chat_completion(
         self,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         model: str,
         temperature: float = 0.1,
         max_tokens: int = 4096,
@@ -79,8 +80,27 @@ class OpenAIProvider(BaseProvider):
         latency_ms = int((time.time() - start_time) * 1000)
 
         usage = response.usage
+        message = response.choices[0].message
+        # Never promote hidden reasoning to final content. It is not a reliable
+        # structured answer and must not enter downstream extraction or audit logs.
+        content = message.content or ""
+        reasoning_present = bool(getattr(message, "reasoning_content", None) or getattr(message, "reasoning", None))
+        tool_calls: list[dict[str, Any]] = []
+        for call in getattr(message, "tool_calls", None) or []:
+            arguments = getattr(call.function, "arguments", "{}") or "{}"
+            try:
+                args = json.loads(arguments)
+            except (json.JSONDecodeError, TypeError):
+                args = {"_raw_arguments": str(arguments)}
+            tool_calls.append({
+                "id": str(getattr(call, "id", "")),
+                "name": str(getattr(call.function, "name", "")),
+                "args": args,
+            })
         return LLMResponse(
-            content=response.choices[0].message.content or "",
+            content=content,
+            final_content=content,
+            reasoning_present=reasoning_present,
             model=response.model,
             provider=self.name,
             input_tokens=usage.prompt_tokens if usage else 0,
@@ -89,6 +109,7 @@ class OpenAIProvider(BaseProvider):
             total_tokens=usage.total_tokens if usage else 0,
             finish_reason=response.choices[0].finish_reason or "",
             latency_ms=latency_ms,
+            tool_calls=tool_calls,
             raw_response=response.model_dump() if hasattr(response, "model_dump") else {},
         )
 

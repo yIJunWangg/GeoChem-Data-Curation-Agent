@@ -3,7 +3,7 @@
 import pytest
 import yaml
 
-from geochem.core.config import AppConfig, load_config, save_config, ModelPricing, _default_config
+from geochem.core.config import AppConfig, load_config, save_config, ModelPricing, ProviderConfig, _default_config
 
 
 def test_default_config():
@@ -48,6 +48,22 @@ def test_load_nonexistent_config():
     config = load_config("/nonexistent/path/settings.yaml")
     # Should fall back to defaults
     assert len(config.providers) >= 3
+
+
+def test_save_config_sanitizes_plaintext_provider_secret(tmp_path, monkeypatch):
+    config_path = tmp_path / "settings.yaml"
+    monkeypatch.delenv("CUSTOM_PROVIDER_API_KEY", raising=False)
+    config = AppConfig(providers=[
+        ProviderConfig(name="custom-provider", api_format="openai", api_key="sk-realistic-test-secret-123456")
+    ])
+
+    save_config(config, config_path)
+    saved = config_path.read_text(encoding="utf-8")
+    loaded = load_config(config_path)
+
+    assert "sk-realistic-test-secret-123456" not in saved
+    assert "${CUSTOM_PROVIDER_API_KEY}" in saved
+    assert loaded.get_provider("custom-provider").api_key == "${CUSTOM_PROVIDER_API_KEY}"
 
 
 def test_model_pricing():

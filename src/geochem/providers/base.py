@@ -23,7 +23,7 @@ class BaseProvider(ABC):
     @abstractmethod
     def chat_completion(
         self,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         model: str,
         temperature: float = 0.1,
         max_tokens: int = 4096,

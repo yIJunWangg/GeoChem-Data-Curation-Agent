@@ -840,6 +840,8 @@ class ProjectRepository:
                 "key_status": key_status,
                 "models": [m.name for m in provider.models],
             })
+        if default_task:
+            providers.sort(key=lambda item: 0 if item["name"] == default_task.provider else 1)
         project_path = ""
         project_name = ""
         if project_id:

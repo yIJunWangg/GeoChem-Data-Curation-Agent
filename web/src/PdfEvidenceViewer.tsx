@@ -40,6 +40,7 @@ export function PdfEvidenceViewer({ projectId, resources, evidence, details, onR
   const [fitWidth, setFitWidth] = useState(true)
   const [containerWidth, setContainerWidth] = useState(430)
   const [detailsOpen, setDetailsOpen] = useState(true)
+  const [activeSpanIndex, setActiveSpanIndex] = useState(0)
   const containerRef = useRef<HTMLDivElement>(null)
   const evidenceRef = useRef<HTMLDivElement>(null)
 
@@ -49,8 +50,15 @@ export function PdfEvidenceViewer({ projectId, resources, evidence, details, onR
 
   useEffect(() => {
     if (evidence?.resource_id) setResourceId(evidence.resource_id)
-    if (evidence?.page_number) setPageNumber(evidence.page_number)
-  }, [evidence?.resource_id, evidence?.page_number])
+    const firstSpan = evidence?.page_spans?.[0]
+    if (firstSpan?.page_number) {
+      setActiveSpanIndex(0)
+      setPageNumber(firstSpan.page_number)
+    } else if (evidence?.page_number) {
+      setActiveSpanIndex(0)
+      setPageNumber(evidence.page_number)
+    }
+  }, [evidence?.resource_id, evidence?.page_number, evidence?.page_spans])
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -62,7 +70,7 @@ export function PdfEvidenceViewer({ projectId, resources, evidence, details, onR
   useEffect(() => {
     const timer = window.setTimeout(() => evidenceRef.current?.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' }), 180)
     return () => window.clearTimeout(timer)
-  }, [resourceId, pageNumber, evidence?.bbox?.join(',')])
+  }, [resourceId, pageNumber, evidence?.bbox?.join(','), evidence?.page_spans?.map((span) => `${span.page_number}:${span.bbox.join(',')}`).join('|')])
 
   const changePage = (next: number) => setPageNumber(clamp(Math.round(next || 1), 1, pageCount || 1))
   const changeZoom = (delta: number) => {
@@ -70,7 +78,10 @@ export function PdfEvidenceViewer({ projectId, resources, evidence, details, onR
     setZoom((current) => clamp(Math.round((current + delta) * 10) / 10, 0.5, 2.5))
   }
   const renderedWidth = fitWidth ? Math.max(320, containerWidth - 28) : Math.round(720 * zoom)
-  const bbox = evidence?.bbox || []
+  const spans = evidence?.page_spans?.length ? evidence.page_spans : (evidence?.bbox?.length === 4 && evidence?.page_number ? [{ page_number: evidence.page_number, bbox: evidence.bbox, role: 'evidence' }] : [])
+  const activeSpan = spans[Math.min(activeSpanIndex, Math.max(0, spans.length - 1))]
+  const bbox = activeSpan?.bbox || []
+  const showEvidence = bbox.length === 4 && activeSpan?.page_number === pageNumber && (!evidence?.resource_id || evidence.resource_id === resourceId)
 
   return <section className="pdf-evidence-viewer">
     <div className="pdf-evidence-toolbar">
@@ -81,6 +92,7 @@ export function PdfEvidenceViewer({ projectId, resources, evidence, details, onR
       <label className="pdf-page-input"><input aria-label="PDF 页码" type="number" min={1} max={pageCount || 1} value={pageNumber} onChange={(event) => changePage(Number(event.target.value))}/><span>/ {pageCount || '?'}</span></label>
       <button className="icon-button" title="下一页" disabled={!pageCount || pageNumber >= pageCount} onClick={() => changePage(pageNumber + 1)}><ChevronRight size={16}/></button>
       <span className="pdf-toolbar-divider" />
+      {spans.length > 1 && <><button disabled={activeSpanIndex <= 0} onClick={() => { const next = Math.max(0, activeSpanIndex - 1); setActiveSpanIndex(next); setPageNumber(spans[next].page_number) }}>证据 {activeSpanIndex + 1}/{spans.length}</button><button disabled={activeSpanIndex >= spans.length - 1} onClick={() => { const next = Math.min(spans.length - 1, activeSpanIndex + 1); setActiveSpanIndex(next); setPageNumber(spans[next].page_number) }}>下一处</button><span className="pdf-toolbar-divider" /></>}
       <button className="icon-button" title="缩小" onClick={() => changeZoom(-0.1)}><Minus size={15}/></button>
       <button title="恢复 100%" onClick={() => { setFitWidth(false); setZoom(1) }}>{fitWidth ? '适宽' : `${Math.round(zoom * 100)}%`}</button>
       <button className="icon-button" title="放大" onClick={() => changeZoom(0.1)}><Plus size={15}/></button>
@@ -97,10 +109,10 @@ export function PdfEvidenceViewer({ projectId, resources, evidence, details, onR
       >
         <div className="pdf-page-wrap evidence-page-wrap">
           <Page pageNumber={pageNumber} width={renderedWidth} renderAnnotationLayer={false} renderTextLayer />
-          {bbox.length === 4 && evidence?.page_number === pageNumber && (!evidence.resource_id || evidence.resource_id === resourceId) && <div
+          {showEvidence && <div
             ref={evidenceRef}
-            className={`evidence-box-wrap active ${evidence.element_type || 'paragraph'}`}
-            title={evidence.target_header || evidence.caption || '来源证据'}
+            className={`evidence-box-wrap active ${evidence?.element_type || 'paragraph'}`}
+            title={evidence?.target_header || evidence?.caption || '来源证据'}
             style={{ left: `${bbox[0] * 100}%`, top: `${bbox[1] * 100}%`, width: `${(bbox[2] - bbox[0]) * 100}%`, height: `${(bbox[3] - bbox[1]) * 100}%` }}
           />}
         </div>

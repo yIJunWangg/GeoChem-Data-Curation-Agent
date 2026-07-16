@@ -1,0 +1,38 @@
+# GeoChem example settings.
+#
+# Copy this file to config/settings.local.yaml for local overrides.
+# API keys should be stored as environment references, never plaintext.
+
+default_project_dir: geochem-data
+providers:
+  - name: opencode-go-openai
+    display_name: OpenCode Go (OpenAI-compatible)
+    api_format: openai
+    base_url: https://opencode.ai/zen/go/v1
+    api_key: ${OPENCODE_GO_API_KEY}
+    models:
+      - name: kimi-k2.7-code
+        display_name: Kimi K2.7 Code
+      - name: deepseek-v4-flash
+        display_name: DeepSeek V4 Flash
+  - name: openrouter
+    display_name: OpenRouter
+    api_format: openai
+    base_url: https://openrouter.ai/api/v1
+    api_key: ${OPENROUTER_API_KEY}
+    default_headers:
+      HTTP-Referer: https://github.com/geochem-agent
+      X-Title: GeoChem Data Curation Agent
+    models:
+      - name: openai/gpt-4o-mini
+        display_name: OpenAI GPT-4o Mini
+task_models:
+  _default:
+    provider: opencode-go-openai
+    model: kimi-k2.7-code
+    temperature: 0.1
+    max_tokens: 4096
+fallback_chain: []
+log_level: INFO
+log_dir: logs
+ui_preferences: {}

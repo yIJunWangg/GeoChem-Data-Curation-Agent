@@ -18,12 +18,17 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from ..core.project import ProjectManager
-from ..core.config import TaskModelConfig, load_config, save_config
+from ..core.config import ModelConfig, ModelPricing, ProviderConfig, TaskModelConfig, load_config, provider_presets, save_config
+from ..core.secrets import parse_secret_ref, resolve_secret, secret_ref_for_provider, store_secret_for_provider
 from ..curation.header_config_importer import HeaderConfigImporter
 from ..curation.target_headers import TargetHeaderBuilder
 from ..ingestion.file_importer import FileImporter
+from ..ingestion.literature_search import LiteratureSearchService
+from ..ingestion.open_access_resolver import OpenAccessResolver
 from ..workflow import WorkflowRunner
 from ..workbench_service import WorkbenchService
+from ..agent_service import ArticleCurationAgent, RetrievalService
+from ..agent_tools import EntitySelectionInput
 
 
 class SelectionRequest(BaseModel):
@@ -43,12 +48,97 @@ class ElementUpdateRequest(BaseModel):
     bbox: list[float] | None = None
     element_type: str | None = None
     caption: str | None = None
+    raw_table: dict[str, Any] | None = None
+
+
+class ElementTeachRequest(BaseModel):
+    label: str
+    note: str = ""
+
+
+class PreExtractionRuleRequest(BaseModel):
+    source_alias: str = ""
+    pattern: str = ""
+    target_header: str = ""
+    target_field: str = ""
+    target_unit: str = ""
+    rule_type: str = "source_alias"
+    source_type: str = "table_header"
+    evidence: str = ""
+    conditions: dict[str, Any] = Field(default_factory=dict)
+    confidence: float = 0.9
+    scope: str = "article"
+    enabled: bool = True
+    element_id: str = ""
+
+
+class RuleMemoryPatchRequest(BaseModel):
+    enabled: bool | None = None
+    scope: str | None = None
+    target_header: str | None = None
+    target_field: str | None = None
+    target_unit: str | None = None
+    pattern: str | None = None
+    rule_type: str | None = None
+    source_type: str | None = None
+    evidence: str | None = None
+    conditions: dict[str, Any] | None = None
+
+
+class ElementHitTestRequest(BaseModel):
+    resource_id: str
+    page_number: int
+    bbox: list[float]
+
+
+class ElementMergeSelectionRequest(BaseModel):
+    page_number: int
+    bbox: list[float]
 
 
 class ExtractionRequest(BaseModel):
     project_id: str
     article_id: str
     use_llm: bool = True
+
+
+class TableStandardizeRequest(BaseModel):
+    project_id: str
+    article_id: str
+    use_llm: bool = False
+
+
+class StandardTableUpdateRequest(BaseModel):
+    project_id: str
+    headers: list[str] = Field(default_factory=list)
+    rows: list[list[Any]] = Field(default_factory=list)
+    edit_reason: str = ""
+
+
+class RestandardizeTableRequest(BaseModel):
+    project_id: str
+    mode: str = "source_headers"
+
+
+class TableRuleConfirmRequest(BaseModel):
+    project_id: str
+    rules: list[dict[str, Any]] = Field(default_factory=list)
+    scope: str = "article"
+
+
+class TableRuleAssistRequest(BaseModel):
+    project_id: str
+    source_headers: list[str] = Field(default_factory=list)
+
+
+class ParagraphExtractionRequest(BaseModel):
+    project_id: str
+    element_ids: list[str] = Field(default_factory=list)
+    use_llm: bool = True
+
+
+class ReapplyRulesRequest(BaseModel):
+    project_id: str
 
 
 class CellUpdateRequest(BaseModel):
@@ -64,6 +154,14 @@ class CellUpdateRequest(BaseModel):
 class MergeRequest(BaseModel):
     project_id: str
     record_ids: list[str]
+
+
+class ManualCandidateRecordRequest(BaseModel):
+    project_id: str
+    article_id: str
+    batch_id: str = ""
+    sample_id: str = ""
+    values: dict[str, Any] = Field(default_factory=dict)
 
 
 class CellConfirmRequest(BaseModel):
@@ -86,6 +184,15 @@ class ManualFillRequest(BaseModel):
     value: str
     unit: str = ""
     explanation: str = ""
+
+
+class ManualImageCellRequest(BaseModel):
+    project_id: str
+    candidate_record_id: str
+    element_id: str
+    target_header: str
+    value: str
+    evidence_note: str = ""
 
 
 class FinalizeRequest(BaseModel):
@@ -117,6 +224,29 @@ class ConfirmAccessRequest(BaseModel):
 
 class ProviderTestRequest(BaseModel):
     api_key: str = ""
+    provider: str = ""
+    model: str = ""
+    display_name: str = ""
+    api_format: str = "openai"
+    base_url: str = ""
+    api_key_ref: str = ""
+    default_headers: dict[str, str] = Field(default_factory=dict)
+    auth_type: str = "bearer"
+    api_key_header: str = "Authorization"
+
+
+class ModelSetupRequest(BaseModel):
+    provider_preset: str
+    model_id: str
+    api_key: str = ""
+    base_url: str = ""
+
+
+class ProviderModelRequest(BaseModel):
+    name: str
+    display_name: str = ""
+    max_tokens: int = 4096
+    supports_vision: bool = False
 
 class SettingsUpdateRequest(BaseModel):
     default_provider: str
@@ -124,10 +254,91 @@ class SettingsUpdateRequest(BaseModel):
     vision_provider: str = ""
     vision_model: str = ""
     api_keys: dict[str, str] = Field(default_factory=dict)
+    task_models: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    providers: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ExportDirectoryRequest(BaseModel):
     path: str = ""
+
+
+class ChatThreadRequest(BaseModel):
+    project_id: str
+    article_id: str = ""
+    title: str = ""
+    scope: str = "article"
+
+
+class ChatMessageRequest(BaseModel):
+    project_id: str
+    article_id: str = ""
+    content: str
+
+
+class ChatEntitySelectionRequest(BaseModel):
+    project_id: str
+    entity_type: str
+    entity_id: str = ""
+    query: str = ""
+
+
+class ChatActionRequest(BaseModel):
+    project_id: str
+    action: str
+    content: str = ""
+    article_id: str = ""
+    run_id: str = ""
+    entity_type: str = ""
+    entity_id: str = ""
+    query: str = ""
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentRunRequest(BaseModel):
+    project_id: str
+    thread_id: str
+    article_id: str = ""
+    message: str
+
+
+class AgentResumeRequest(BaseModel):
+    project_id: str
+    response: dict[str, Any] = Field(default_factory=dict)
+
+
+class ArticleSourceSearchRequest(BaseModel):
+    project_id: str
+    source: str
+
+
+class LiteratureSearchRequest(BaseModel):
+    project_id: str = "DEFAULT_WORKSPACE"
+    thread_id: str = ""
+    query: str
+    limit: int = 8
+    sort_mode: str = "relevance"
+
+
+class LiteratureImportRequest(BaseModel):
+    project_id: str
+    thread_id: str = ""
+
+
+class RagQueryRequest(BaseModel):
+    project_id: str
+    article_id: str
+    question: str
+    mode: str = "answer"
+    field: str = ""
+    operation: str = "summary"
+
+
+class ArticleSourceConfirmRequest(BaseModel):
+    project_id: str
+
+
+class AgentHandoffRequest(BaseModel):
+    project_id: str
 
 
 class TaskManager:
@@ -337,12 +548,339 @@ class WebRepository:
             db.close()
 
 
+TASK_ROUTE_META = {
+    "_default": "默认文本模型",
+    "field_mapping": "字段映射",
+    "document_record_extraction": "文献/段落抽取",
+    "unit_suggestion": "单位换算建议",
+    "rule_learning": "规则学习",
+    "data_extraction": "数据抽取",
+    "chat_assistant": "对话助手",
+    "figure_extraction": "图像处理",
+}
+
+
+def _api_key_from_ref(value: str) -> str:
+    secret, _source, _env_name = resolve_secret(value)
+    return secret
+
+
+def _save_provider_secret(config, provider_name: str, api_key: str) -> str:
+    """Store an API key outside config YAML and apply the reference."""
+    provider = config.get_provider(provider_name)
+    env_name = parse_secret_ref(provider.api_key if provider else "") or None
+    ref, _source = store_secret_for_provider(provider_name, api_key, env_name)
+    if provider:
+        provider.api_key = ref
+    return ref
+
+
+def _key_status_label(source: str) -> str:
+    if source == "environment":
+        return "环境变量已配置"
+    if source == "keychain":
+        return "系统钥匙串已配置"
+    if source == "inline":
+        return "配置文件含明文 Key，需迁移"
+    return "未配置"
+
+
+def _model_from_payload(data: dict[str, Any]) -> ModelConfig:
+    return ModelConfig(
+        name=str(data.get("name") or "").strip(),
+        display_name=str(data.get("display_name") or data.get("name") or "").strip(),
+        max_tokens=int(data.get("max_tokens") or 4096),
+        supports_vision=bool(data.get("supports_vision") or False),
+        pricing=ModelPricing(**(data.get("pricing") or {})),
+    )
+
+
+def _upsert_model(provider: ProviderConfig, model: ModelConfig) -> None:
+    if not model.name:
+        return
+    for index, existing in enumerate(provider.models):
+        if existing.name == model.name:
+            provider.models[index] = model
+            return
+    provider.models.append(model)
+
+
+OPENCODE_OPENAI_MODELS = {
+    "glm-5.2", "glm-5.1", "kimi-k2.7-code", "kimi-k2.6",
+    "deepseek-v4-pro", "deepseek-v4-flash", "mimo-v2.5", "mimo-v2.5-pro",
+}
+OPENCODE_ANTHROPIC_MODELS = {
+    "minimax-m3", "minimax-m2.7", "minimax-m2.5",
+    "qwen3.7-max", "qwen3.7-plus", "qwen3.6-plus",
+}
+
+MODEL_SETUP_PRESETS = [
+    {"id": "opencode-go", "label": "OpenCode Go", "providers": ["opencode-go-openai", "opencode-go-anthropic"]},
+    {"id": "deepseek", "label": "DeepSeek", "providers": ["deepseek-openai", "deepseek-anthropic"]},
+    {"id": "xiaomi", "label": "Xiaomi MiMo", "providers": ["xiaomi", "xiaomi-anthropic"]},
+    {"id": "openrouter", "label": "OpenRouter", "providers": ["openrouter"]},
+    {"id": "openai", "label": "OpenAI", "providers": ["openai"]},
+    {"id": "anthropic", "label": "Anthropic", "providers": ["anthropic"]},
+    {"id": "custom-openai", "label": "自定义 OpenAI-compatible", "providers": ["custom-openai-compatible"]},
+    {"id": "custom-anthropic", "label": "自定义 Anthropic-compatible", "providers": ["custom-anthropic-compatible"]},
+]
+
+TEXT_TASK_ROUTES = (
+    "_default",
+    "field_mapping",
+    "document_record_extraction",
+    "unit_suggestion",
+    "rule_learning",
+    "data_extraction",
+    "chat_assistant",
+)
+
+
+def _normalize_base_url(base_url: str, api_format: str) -> str:
+    url = (base_url or "").strip().rstrip("/")
+    if api_format == "openai" and url.endswith("/chat/completions"):
+        return url[: -len("/chat/completions")]
+    if api_format == "anthropic" and url.endswith("/messages"):
+        return url[: -len("/messages")]
+    return url
+
+
+def _normalize_provider_model(provider_name: str, model_name: str) -> tuple[str, str]:
+    provider = (provider_name or "").strip()
+    model = (model_name or "").strip()
+    if model.startswith("opencode-go/"):
+        model = model.split("/", 1)[1]
+        provider = "opencode-go-anthropic" if model in OPENCODE_ANTHROPIC_MODELS else "opencode-go-openai"
+    elif provider in {"opencode-go", "opencode"}:
+        provider = "opencode-go-anthropic" if model in OPENCODE_ANTHROPIC_MODELS else "opencode-go-openai"
+    return provider, model
+
+
+def _setup_preset_for_provider(provider_name: str) -> str:
+    for preset in MODEL_SETUP_PRESETS:
+        if provider_name in preset["providers"]:
+            return str(preset["id"])
+    return provider_name or ""
+
+
+def _resolve_model_setup_provider(config, provider_preset: str, model_id: str, base_url: str = "") -> tuple[ProviderConfig, str, str]:
+    preset = (provider_preset or "").strip()
+    model = (model_id or "").strip()
+    if not preset:
+        raise ValueError("请选择服务商")
+    if not model:
+        raise ValueError("请输入模型 ID")
+
+    provider_name = preset
+    if preset == "opencode-go":
+        provider_name = "opencode-go-anthropic" if model in OPENCODE_ANTHROPIC_MODELS or model.startswith("qwen3.") or model.startswith("minimax-") else "opencode-go-openai"
+    elif preset == "deepseek":
+        provider_name = "deepseek-openai"
+    elif preset == "xiaomi":
+        provider_name = "xiaomi"
+    elif preset == "custom-openai":
+        provider_name = "custom-openai-compatible"
+    elif preset == "custom-anthropic":
+        provider_name = "custom-anthropic-compatible"
+    provider_name, model = _normalize_provider_model(provider_name, model)
+
+    provider = config.get_provider(provider_name)
+    if not provider and preset.startswith("custom-"):
+        api_format = "anthropic" if preset == "custom-anthropic" else "openai"
+        provider = ProviderConfig(
+            name=provider_name,
+            display_name="自定义 Anthropic-compatible" if api_format == "anthropic" else "自定义 OpenAI-compatible",
+            api_format=api_format,
+            base_url=_normalize_base_url(base_url, api_format),
+            is_custom=True,
+            provider_kind="custom",
+            models=[ModelConfig(name=model, display_name=model)],
+        )
+        config.providers.append(provider)
+    if not provider:
+        raise ValueError(f"未知服务商：{provider_name}")
+    if base_url and provider.is_custom:
+        provider.base_url = _normalize_base_url(base_url, provider.api_format)
+    _ensure_route_model(config, provider.name, model)
+    return provider, provider.name, model
+
+
+def _apply_single_model_routes(config, provider_name: str, model_name: str) -> None:
+    current = config.get_task_model("_default")
+    routes = dict(config.task_models)
+    for task_name in TEXT_TASK_ROUTES:
+        routes[task_name] = TaskModelConfig(
+            provider=provider_name,
+            model=model_name,
+            temperature=current.temperature if current else 0.1,
+            max_tokens=current.max_tokens if current else 4096,
+        )
+    routes.pop("figure_extraction", None)
+    config.task_models = routes
+
+
+def _model_setup_status(config) -> dict[str, Any]:
+    default = config.get_task_model("_default")
+    provider = config.get_provider(default.provider) if default else None
+    text_routes = {name: config.task_models.get(name) for name in TEXT_TASK_ROUTES}
+    applied = bool(default) and all(route and route.provider == default.provider and route.model == default.model for route in text_routes.values())
+    public_provider = _provider_public(provider) if provider else {}
+    prefs = config.ui_preferences or {}
+    setup_state = prefs.get("model_setup", {})
+    key_status = public_provider.get("key_status", "not_configured")
+    return {
+        "configured": bool(provider and default and key_status == "configured"),
+        "provider": default.provider if default else "",
+        "provider_preset": _setup_preset_for_provider(default.provider if default else ""),
+        "provider_label": public_provider.get("display_name", ""),
+        "model": default.model if default else "",
+        "key_status": key_status,
+        "key_status_label": public_provider.get("key_status_label", _key_status_label(key_status)),
+        "key_source": public_provider.get("key_source", ""),
+        "api_key_ref": public_provider.get("api_key_ref", ""),
+        "env_name": public_provider.get("env_name", ""),
+        "all_text_tasks_use_same_model": applied,
+        "last_test": setup_state,
+        "presets": MODEL_SETUP_PRESETS,
+    }
+
+
+def _ensure_route_model(config, provider_name: str, model_name: str) -> None:
+    provider_name, model_name = _normalize_provider_model(provider_name, model_name)
+    provider = config.get_provider(provider_name)
+    if provider and model_name and model_name not in {model.name for model in provider.models}:
+        provider.models.append(ModelConfig(name=model_name, display_name=model_name))
+
+
+def _provider_public(provider: ProviderConfig) -> dict[str, Any]:
+    key_ref = provider.api_key or ""
+    _secret, source, env_name = resolve_secret(key_ref)
+    safe_ref = key_ref if env_name else secret_ref_for_provider(provider.name) if source == "inline" else key_ref
+    return {
+        "name": provider.name,
+        "display_name": provider.display_name or provider.name,
+        "base_url": provider.base_url or "",
+        "api_format": provider.api_format,
+        "enabled": provider.enabled,
+        "is_custom": provider.is_custom,
+        "provider_kind": provider.provider_kind,
+        "auth_type": provider.auth_type,
+        "api_key_header": provider.api_key_header,
+        "default_headers": provider.default_headers,
+        "api_key_ref": safe_ref,
+        "key_status": "configured" if source in {"environment", "keychain"} else "inline" if source == "inline" else "missing" if env_name else "not_configured",
+        "key_source": source,
+        "key_status_label": _key_status_label(source),
+        "env_name": env_name,
+        "models": [
+            {
+                "name": model.name,
+                "display_name": model.display_name or model.name,
+                "supports_vision": model.supports_vision,
+                "max_tokens": model.max_tokens,
+                "pricing": model.pricing.model_dump(),
+            }
+            for model in provider.models
+        ],
+    }
+
+
+def _provider_from_payload(data: dict[str, Any], existing: ProviderConfig | None = None) -> ProviderConfig:
+    name = str(data.get("name") or (existing.name if existing else "")).strip()
+    api_format = data.get("api_format") or (existing.api_format if existing else "openai")
+    api_key_ref = data.get("api_key_ref") or (existing.api_key if existing else None)
+    if data.get("api_key") and parse_secret_ref(str(data.get("api_key"))):
+        api_key_ref = data.get("api_key")
+    if not api_key_ref:
+        api_key_ref = secret_ref_for_provider(name)
+    provider = ProviderConfig(
+        name=name,
+        display_name=str(data.get("display_name") or (existing.display_name if existing else "") or name).strip(),
+        api_key=api_key_ref,
+        base_url=_normalize_base_url(data.get("base_url") or (existing.base_url if existing else None) or "", api_format) or None,
+        api_format=api_format,
+        enabled=bool(data.get("enabled", existing.enabled if existing else True)),
+        default_headers=data.get("default_headers") or (existing.default_headers if existing else {}),
+        is_custom=bool(data.get("is_custom", existing.is_custom if existing else True)),
+        auth_type=data.get("auth_type") or (existing.auth_type if existing else "bearer"),
+        api_key_header=data.get("api_key_header") or (existing.api_key_header if existing else "Authorization"),
+        provider_kind=data.get("provider_kind") or (existing.provider_kind if existing else ("custom" if data.get("is_custom", True) else "preset")),
+        models=[],
+    )
+    for model_data in data.get("models") or []:
+        model = _model_from_payload(model_data)
+        _provider_name, model.name = _normalize_provider_model(provider.name, model.name)
+        if model.name:
+            _upsert_model(provider, model)
+    if existing and not provider.models:
+        provider.models = existing.models
+    return provider
+
+
+def _test_provider_config(provider: ProviderConfig, api_key: str = "", model_name: str = "") -> dict[str, Any]:
+    from ..providers.openai_provider import OpenAIProvider
+    from ..providers.anthropic_provider import AnthropicProvider
+    from ..providers.google_provider import GoogleProvider
+    from ..providers.zhipu_provider import ZhipuProvider
+    from ..providers.ollama_provider import OllamaProvider
+
+    key = api_key or _api_key_from_ref(provider.api_key or "")
+    default_headers = dict(provider.default_headers or {})
+    if provider.auth_type == "api-key-header" and key:
+        default_headers[provider.api_key_header or "Authorization"] = key
+        key = "not-used"
+    elif provider.auth_type == "none" and not key:
+        key = "not-used"
+    kwargs = {"api_key": key, "base_url": provider.base_url}
+    if default_headers:
+        kwargs["default_headers"] = default_headers
+    provider_map = {
+        "openai": OpenAIProvider,
+        "anthropic": AnthropicProvider,
+        "google": GoogleProvider,
+        "zhipu": ZhipuProvider,
+        "ollama": OllamaProvider,
+    }
+    cls = provider_map.get(provider.name) or (AnthropicProvider if provider.api_format == "anthropic" else OpenAIProvider)
+    instance = cls(**kwargs)
+    instance.name = provider.name
+    instance.display_name = provider.display_name or provider.name
+    if model_name:
+        response = instance.chat_completion([{"role": "user", "content": "ping"}], model=model_name, max_tokens=1, temperature=0)
+        normalized = [{"name": model_name, "display_name": model_name, "supports_vision": False, "max_tokens": 4096}]
+        return {
+            "success": True,
+            "models": normalized,
+            "provider": provider.name,
+            "model": response.model or model_name,
+            "message": "模型调用成功",
+            "last_tested_at": datetime.now().isoformat(timespec="seconds"),
+        }
+    valid = instance.validate_api_key()
+    models = instance.list_models() if valid else []
+    if not valid and model_name:
+        instance.chat_completion([{"role": "user", "content": "ping"}], model=model_name, max_tokens=1, temperature=0)
+        valid = True
+    normalized = [
+        {
+            "name": item.get("name") or item.get("id") or "",
+            "display_name": item.get("display_name") or item.get("name") or item.get("id") or "",
+            "supports_vision": bool(item.get("supports_vision") or False),
+            "max_tokens": int(item.get("max_tokens") or 4096),
+        }
+        for item in models
+        if item.get("name") or item.get("id")
+    ]
+    return {"success": valid, "models": normalized, "provider": provider.name, "model": model_name, "message": "连接测试成功" if valid else "连接测试失败", "last_tested_at": datetime.now().isoformat(timespec="seconds")}
+
+
 def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
     pm = project_manager or ProjectManager()
     service = WorkbenchService(pm)
     workflow = WorkflowRunner(project_manager=pm)
     repo = WebRepository(pm)
     tasks = TaskManager(pm)
+    agent = ArticleCurationAgent(pm)
     app = FastAPI(title="GeoChem Local API", version="1.0.0")
     app.add_middleware(
         CORSMiddleware,
@@ -360,36 +898,243 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
     def health():
         return {"status": "ok", "time": datetime.now().isoformat()}
 
+    @app.get("/api/v1/chat/threads")
+    def chat_threads(project_id: str, article_id: str = ""):
+        return agent.threads(project_id, article_id)
+
+    @app.post("/api/v1/chat/threads")
+    def create_chat_thread(request: ChatThreadRequest):
+        return agent.create_thread(request.project_id, request.article_id, request.title, request.scope)
+
+    @app.get("/api/v1/chat/threads/{thread_id}")
+    def chat_thread(thread_id: str, project_id: str):
+        return agent.thread(project_id, thread_id)
+
+    @app.get("/api/v1/chat/threads/{thread_id}/state")
+    def chat_thread_state(thread_id: str, project_id: str):
+        return agent.thread_state(project_id, thread_id)
+
+    @app.delete("/api/v1/chat/threads/{thread_id}")
+    def delete_chat_thread(thread_id: str, project_id: str, cancel_waiting: bool = False):
+        return agent.delete_thread(project_id, thread_id, cancel_waiting)
+
+    @app.post("/api/v1/chat/threads/{thread_id}/messages")
+    def create_chat_message(thread_id: str, request: ChatMessageRequest):
+        return agent.start(
+            request.project_id,
+            thread_id,
+            request.content,
+            request.article_id,
+            require_model=True,
+        )
+
+    @app.post("/api/v1/chat/threads/{thread_id}/actions")
+    def chat_action(thread_id: str, request: ChatActionRequest):
+        if request.action == "message":
+            return agent.start(
+                request.project_id,
+                thread_id,
+                request.content,
+                request.article_id,
+                require_model=True,
+            )
+        if request.action in {"select", "clear_selection"}:
+            entity_type = "clear" if request.action == "clear_selection" else request.entity_type
+            return agent.select_chat_entity(
+                request.project_id, thread_id,
+                EntitySelectionInput(entity_type=entity_type, entity_id=request.entity_id, query=request.query),
+            )
+        if request.action == "resume":
+            if not request.run_id:
+                raise ValueError("缺少要恢复的 Agent run_id。")
+            return agent.resume(request.project_id, request.run_id, request.payload, require_model=True)
+        if request.action == "handoff":
+            if not request.run_id:
+                raise ValueError("缺少要交接的 Agent run_id。")
+            return agent.handoff(request.project_id, request.run_id)
+        if request.action == "start_processing":
+            return agent.start(
+                request.project_id,
+                thread_id,
+                request.content or "开始处理当前文章",
+                request.article_id,
+                require_model=True,
+            )
+        if request.action == "execute_confirmed":
+            if not request.run_id:
+                raise ValueError("缺少提出该操作的 Agent run_id。")
+            operation = str(request.payload.get("operation") or "")
+            if not operation:
+                raise ValueError("缺少要确认执行的正式操作。")
+            return agent.execute_confirmed_action(
+                request.project_id,
+                thread_id,
+                request.run_id,
+                operation,
+                request.payload,
+            )
+        raise ValueError("不支持的对话操作。")
+
+    @app.get("/api/v1/agent/entities")
+    def agent_entities(project_id: str, type: str = "", q: str = "", context_id: str = ""):
+        return agent.tools.entities(project_id, type, q, context_id)
+
+    @app.post("/api/v1/chat/threads/{thread_id}/select")
+    def select_chat_entity(thread_id: str, request: ChatEntitySelectionRequest):
+        return agent.select_chat_entity(
+            request.project_id,
+            thread_id,
+            EntitySelectionInput(entity_type=request.entity_type, entity_id=request.entity_id, query=request.query),
+        )
+
+    @app.post("/api/v1/article-sources/search")
+    def search_article_sources(request: ArticleSourceSearchRequest):
+        return OpenAccessResolver(pm).search(request.project_id, request.source)
+
+    @app.post("/api/v1/literature/search")
+    def search_literature(request: LiteratureSearchRequest):
+        return agent.search_literature(request.project_id, request.thread_id, request.query, request.sort_mode, request.limit)
+
+    @app.post("/api/v1/literature/results/{result_id}/import")
+    def import_literature_result(result_id: str, request: LiteratureImportRequest):
+        return agent.import_literature_result(request.project_id, request.thread_id, result_id)
+
+    @app.post("/api/v1/article-sources/{source_id}/confirm")
+    def confirm_article_source(source_id: str, request: ArticleSourceConfirmRequest):
+        return OpenAccessResolver(pm).confirm(request.project_id, source_id)
+
+    @app.post("/api/v1/chat/threads/{thread_id}/upload")
+    async def upload_chat_article(thread_id: str, project_id: str, file: UploadFile = File(...)):
+        _config, project_dir = pm.load_project(project_id)
+        # Preserve the user-visible filename in the article source folder; a
+        # NamedTemporaryFile would otherwise turn `main.pdf` into `tmpXXXX.pdf`.
+        safe_name = Path(file.filename or "article.pdf").name or "article.pdf"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir) / safe_name
+            temp_path.write_bytes(await file.read())
+            db = pm.get_database(project_id)
+            try:
+                result = FileImporter().import_file(db, project_dir, temp_path)
+                db.commit()
+            finally:
+                db.close()
+        selected = agent.select_chat_entity(
+            project_id,
+            thread_id,
+            EntitySelectionInput(entity_type="article", entity_id=result.article_id),
+        )
+        return {
+            "article_id": result.article_id,
+            "resource_id": result.resource_id,
+            "file_name": result.file_name,
+            "status": "selected",
+            "message": "PDF 已导入并选择为当前文章，请确认是否开始数据提取。",
+            "selection": selected.get("selection", {}),
+        }
+
+    @app.post("/api/v1/agent-runs")
+    def create_agent_run(request: AgentRunRequest):
+        return agent.start(
+            request.project_id,
+            request.thread_id,
+            request.message,
+            request.article_id,
+            require_model=True,
+        )
+
+    @app.get("/api/v1/agent-runs/{run_id}")
+    def agent_run(run_id: str, project_id: str):
+        return agent.run(project_id, run_id)
+
+    @app.post("/api/v1/agent-runs/{run_id}/resume")
+    def resume_agent_run(run_id: str, request: AgentResumeRequest):
+        return agent.resume(request.project_id, run_id, request.response, require_model=True)
+
+    @app.post("/api/v1/agent-runs/{run_id}/cancel")
+    def cancel_agent_run(run_id: str, project_id: str):
+        return agent.cancel(project_id, run_id)
+
+    @app.post("/api/v1/agent-runs/{run_id}/handoff")
+    def handoff_agent_run(run_id: str, request: AgentHandoffRequest):
+        return agent.handoff(request.project_id, run_id)
+
+    @app.post("/api/v1/agent-runs/{run_id}/resume-from-workbench")
+    def resume_agent_from_workbench(run_id: str, request: AgentHandoffRequest):
+        return agent.resume_from_workbench(request.project_id, run_id)
+
+    @app.post("/api/v1/agent-runs/{run_id}/return-from-workbench")
+    def return_agent_from_workbench(run_id: str, request: AgentHandoffRequest):
+        return agent.resume_from_workbench(request.project_id, run_id)
+
+    @app.get("/api/v1/agent-runs/{run_id}/workbench-diff")
+    def agent_workbench_diff(run_id: str, project_id: str):
+        return agent.workbench_diff(project_id, run_id)
+
+    @app.get("/api/v1/agent-runs/{run_id}/events")
+    async def agent_run_events(run_id: str, project_id: str, after: int = Query(0, ge=0)):
+        async def stream():
+            cursor = after
+            while True:
+                events = agent.events(project_id, run_id, cursor)
+                for event in events:
+                    cursor = max(cursor, int(event["event_id"]))
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                run = agent.run(project_id, run_id)
+                if run["status"] in {"completed", "failed", "cancelled"}:
+                    yield f"data: {json.dumps({'event_id': cursor, 'level': 'INFO', 'message': run['status'], 'done': True}, ensure_ascii=False)}\n\n"
+                    break
+                await asyncio.sleep(0.6)
+        return StreamingResponse(stream(), media_type="text/event-stream")
+
+    @app.get("/api/v1/chat/messages/{message_id}/citations")
+    def chat_citations(message_id: str, project_id: str):
+        return agent.citations(project_id, message_id)
+
+    @app.get("/api/v1/rag/status")
+    def rag_status(project_id: str, article_id: str = ""):
+        return RetrievalService(pm).status(project_id, article_id)
+
+    @app.post("/api/v1/rag/reindex")
+    def rag_reindex(project_id: str, article_id: str):
+        return RetrievalService(pm).sync_article(project_id, article_id)
+
+    @app.post("/api/v1/rag/query")
+    def rag_query(request: RagQueryRequest):
+        retrieval = RetrievalService(pm)
+        if request.mode == "statistics":
+            return retrieval.statistics(request.project_id, request.article_id, request.field, request.operation)
+        return retrieval.answer(request.project_id, request.article_id, request.question)
+
     @app.post("/api/v1/providers/{name}/test")
     def test_provider(name: str, request: ProviderTestRequest):
-        from ..providers.openai_provider import OpenAIProvider
-        from ..providers.anthropic_provider import AnthropicProvider
-        from ..providers.google_provider import GoogleProvider
-        from ..providers.zhipu_provider import ZhipuProvider
-        from ..providers.ollama_provider import OllamaProvider
-
-        # Load base_url from config for this provider
         cfg = load_config()
-        prov_cfg = cfg.get_provider(name)
-        base_url = prov_cfg.base_url if prov_cfg else None
-
-        provider_map = {
-            "openai": OpenAIProvider,
-            "anthropic": AnthropicProvider,
-            "xiaomi-anthropic": AnthropicProvider,
-            "google": GoogleProvider,
-            "zhipu": ZhipuProvider,
-            "ollama": OllamaProvider,
-        }
-        cls = provider_map.get(name, OpenAIProvider)
+        provider_name, model_name = _normalize_provider_model(name, request.model)
+        prov_cfg = cfg.get_provider(provider_name)
+        if not prov_cfg:
+            return {"success": False, "models": [], "error": f"Unknown provider: {provider_name}"}
         try:
-            kwargs = {"api_key": request.api_key}
-            if base_url:
-                kwargs["base_url"] = base_url
-            provider = cls(**kwargs)
-            valid = provider.validate_api_key()
-            models = provider.list_models() if valid else []
-            return {"success": valid, "models": models}
+            return _test_provider_config(prov_cfg, request.api_key, model_name)
+        except Exception as e:
+            return {"success": False, "models": [], "error": str(e)}
+
+    @app.post("/api/v1/providers/test")
+    def test_custom_provider(request: ProviderTestRequest):
+        cfg = load_config()
+        existing = cfg.get_provider(request.provider)
+        provider = _provider_from_payload({
+            "name": request.provider or "custom-test",
+            "display_name": request.display_name or request.provider or "Custom Provider",
+            "api_format": request.api_format or "openai",
+            "base_url": request.base_url,
+            "api_key_ref": request.api_key_ref,
+            "default_headers": request.default_headers,
+            "auth_type": request.auth_type,
+            "api_key_header": request.api_key_header,
+            "is_custom": True,
+        }, existing)
+        try:
+            _provider_name, model_name = _normalize_provider_model(provider.name, request.model)
+            return _test_provider_config(provider, request.api_key, model_name)
         except Exception as e:
             return {"success": False, "models": [], "error": str(e)}
 
@@ -537,9 +1282,73 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
         )
         return {"task_id": task_id}
 
+    @app.post("/api/v1/articles/{article_id}/rediscover-with-rules")
+    def rediscover_with_rules(article_id: str, project_id: str):
+        task_id = tasks.submit(
+            project_id, article_id, "resource_discovery",
+            lambda progress: service.discover_article(project_id, article_id, progress),
+        )
+        return {"task_id": task_id}
+
     @app.get("/api/v1/articles/{article_id}/elements")
     def elements(article_id: str, project_id: str):
         return service.list_elements(project_id, article_id)
+
+    @app.get("/api/v1/articles/{article_id}/resource-score-explanations")
+    def resource_score_explanations(article_id: str, project_id: str):
+        return service.score_explanations(project_id, article_id)
+
+    @app.get("/api/v1/articles/{article_id}/pre-extraction-rules")
+    def pre_extraction_rules(article_id: str, project_id: str):
+        return service.pre_extraction_rules(project_id, article_id)
+
+    @app.post("/api/v1/articles/{article_id}/pre-extraction-rules")
+    def add_pre_extraction_rule(article_id: str, request: PreExtractionRuleRequest, project_id: str):
+        return service.add_pre_extraction_rule(project_id, article_id, request.model_dump())
+
+    @app.get("/api/v1/articles/{article_id}/table-rule-preflight")
+    def table_rule_preflight(article_id: str, project_id: str):
+        return service.table_rule_preflight(project_id, article_id)
+
+    @app.post("/api/v1/articles/{article_id}/table-rule-preflight/assist")
+    def assist_table_rule_preflight(article_id: str, request: TableRuleAssistRequest):
+        return service.assist_table_rule_preflight(request.project_id, article_id, request.source_headers)
+
+    @app.get("/api/v1/model-capabilities")
+    def model_capabilities():
+        return service.model_capabilities()
+
+    @app.post("/api/v1/model-benchmarks/header-mapping")
+    def header_mapping_benchmark(project_id: str):
+        task_id = tasks.submit(
+            project_id, None, "header_mapping_benchmark",
+            lambda progress: service.header_mapping_benchmark(project_id, progress),
+        )
+        return {"task_id": task_id}
+
+    @app.post("/api/v1/articles/{article_id}/table-rule-preflight/confirm")
+    def confirm_table_rule_preflight(article_id: str, request: TableRuleConfirmRequest):
+        return service.confirm_table_rule_preflight(request.project_id, article_id, request.rules, request.scope)
+
+    @app.get("/api/v1/articles/{article_id}/target-headers")
+    def article_target_headers(article_id: str, project_id: str):
+        return service.target_headers(project_id, article_id)
+
+    @app.post("/api/v1/articles/{article_id}/standardize-tables")
+    def standardize_tables(article_id: str, request: TableStandardizeRequest):
+        task_id = tasks.submit(
+            request.project_id, article_id, "table_standardization",
+            lambda progress: service.standardize_tables(request.project_id, article_id, request.use_llm, progress),
+        )
+        return {"task_id": task_id}
+
+    @app.get("/api/v1/articles/{article_id}/paragraph-cues")
+    def paragraph_cues(article_id: str, project_id: str):
+        return service.paragraph_cues(project_id, article_id)
+
+    @app.post("/api/v1/articles/{article_id}/paragraph-cues/refresh")
+    def refresh_paragraph_cues(article_id: str, project_id: str):
+        return service.refresh_paragraph_cues(project_id, article_id)
 
     @app.post("/api/v1/articles/{article_id}/selections")
     def selections(article_id: str, request: SelectionRequest, project_id: str):
@@ -548,6 +1357,10 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
     @app.post("/api/v1/articles/{article_id}/elements/manual")
     def manual_element(article_id: str, request: ManualElementRequest, project_id: str):
         return service.add_manual_element(project_id, article_id, request.resource_id, request.page_number, request.bbox, request.element_type, request.note)
+
+    @app.post("/api/v1/articles/{article_id}/elements/hit-test")
+    def hit_test_elements(article_id: str, request: ElementHitTestRequest, project_id: str):
+        return service.hit_test_elements(project_id, article_id, request.resource_id, request.page_number, request.bbox)
 
     @app.get("/api/v1/articles/{article_id}/resources")
     def resources(article_id: str, project_id: str):
@@ -596,6 +1409,28 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
     def update_element(element_id: str, request: ElementUpdateRequest, project_id: str):
         return service.update_element(project_id, element_id, request.model_dump(exclude_none=True))
 
+    @app.patch("/api/v1/elements/{element_id}/standard-table")
+    def update_standard_table(element_id: str, request: StandardTableUpdateRequest):
+        return service.update_standard_table(
+            request.project_id,
+            element_id,
+            request.headers,
+            request.rows,
+            request.edit_reason,
+        )
+
+    @app.post("/api/v1/elements/{element_id}/restandardize-table")
+    def restandardize_table(element_id: str, request: RestandardizeTableRequest):
+        return service.restandardize_table(request.project_id, element_id, request.mode)
+
+    @app.post("/api/v1/elements/{element_id}/teach")
+    def teach_element(element_id: str, request: ElementTeachRequest, project_id: str):
+        return service.teach_element(project_id, element_id, request.label, request.note)
+
+    @app.post("/api/v1/elements/{element_id}/merge-selection")
+    def merge_selection(element_id: str, request: ElementMergeSelectionRequest, project_id: str):
+        return service.merge_selection(project_id, element_id, request.page_number, request.bbox)
+
     @app.delete("/api/v1/elements/{element_id}")
     def delete_element(element_id: str, project_id: str):
         return service.delete_element(project_id, element_id)
@@ -608,6 +1443,50 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
         )
         return {"task_id": task_id}
 
+    @app.post("/api/v1/articles/{article_id}/extract-tables")
+    def extract_tables(article_id: str, request: ExtractionRequest):
+        task_id = tasks.submit(
+            request.project_id, article_id, "table_extraction",
+            lambda progress: service.extract_tables(request.project_id, article_id, request.use_llm, progress),
+        )
+        return {"task_id": task_id}
+
+    @app.post("/api/v1/articles/{article_id}/extract-paragraphs")
+    def extract_paragraphs(article_id: str, request: ParagraphExtractionRequest):
+        task_id = tasks.submit(
+            request.project_id, article_id, "paragraph_extraction",
+            lambda progress: service.extract_paragraphs(request.project_id, article_id, request.element_ids, request.use_llm, progress),
+        )
+        return {"task_id": task_id}
+
+    @app.post("/api/v1/articles/{article_id}/merge-candidates")
+    def merge_candidates(article_id: str, request: ExtractionRequest):
+        return service.merge_candidates(request.project_id, article_id)
+
+    @app.post("/api/v1/extraction-batches/{batch_id}/reapply-rules")
+    def reapply_rules(batch_id: str, request: ReapplyRulesRequest):
+        return service.reapply_rules(request.project_id, batch_id)
+
+    @app.post("/api/v1/extraction-batches/{batch_id}/validate-evidence")
+    def validate_evidence(batch_id: str, request: ReapplyRulesRequest):
+        return service.validate_batch_evidence(request.project_id, batch_id)
+
+    @app.get("/api/v1/extraction-batches/{batch_id}/field-mappings")
+    def batch_field_mappings(batch_id: str, project_id: str):
+        return service.batch_field_mappings(project_id, batch_id)
+
+    @app.get("/api/v1/extraction-batches/{batch_id}/quality-slices")
+    def quality_slices(batch_id: str, project_id: str, source_type: str = ""):
+        return service.quality_slice(project_id, batch_id, source_type)
+
+    @app.post("/api/v1/articles/{article_id}/elements/{element_id}/reextract")
+    def reextract_element(article_id: str, element_id: str, request: ParagraphExtractionRequest):
+        task_id = tasks.submit(
+            request.project_id, article_id, "element_reextract",
+            lambda progress: service.reextract_element(request.project_id, article_id, element_id, request.use_llm, progress),
+        )
+        return {"task_id": task_id}
+
     @app.get("/api/v1/extraction-batches/{batch_id}/records")
     def batch_records(batch_id: str, project_id: str):
         return service.batch_records(project_id, batch_id)
@@ -616,9 +1495,38 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
     def update_cell(cell_id: str, request: CellUpdateRequest, project_id: str):
         return service.update_cell(project_id, cell_id, request.model_dump(exclude_none=True))
 
+    @app.post("/api/v1/candidate-cells/manual-image")
+    def manual_image_cell(request: ManualImageCellRequest):
+        return service.upsert_manual_image_cell(
+            request.project_id,
+            request.candidate_record_id,
+            request.element_id,
+            request.target_header,
+            request.value,
+            request.evidence_note,
+        )
+
     @app.post("/api/v1/candidate-records/merge")
     def merge_records(request: MergeRequest):
         return service.merge_records(request.project_id, request.record_ids)
+
+    @app.post("/api/v1/candidate-records/manual")
+    def manual_candidate_record(request: ManualCandidateRecordRequest):
+        return service.create_manual_candidate_record(
+            request.project_id,
+            request.article_id,
+            request.batch_id,
+            request.sample_id,
+            request.values,
+        )
+
+    @app.delete("/api/v1/candidate-records/{record_id}")
+    def delete_candidate_record(record_id: str, project_id: str):
+        return service.delete_candidate_record(project_id, record_id)
+
+    @app.delete("/api/v1/candidate-cells/{cell_id}")
+    def delete_candidate_cell(cell_id: str, project_id: str):
+        return service.delete_candidate_cell(project_id, cell_id)
 
     @app.post("/api/v1/candidate-cells/{cell_id}/confirm")
     def confirm_cell(cell_id: str, request: CellConfirmRequest, project_id: str):
@@ -699,7 +1607,19 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
 
     @app.get("/api/v1/rules")
     def rules(project_id: str):
-        return repo.rules(project_id)
+        return service.rule_memory(project_id)
+
+    @app.get("/api/v1/rule-memory")
+    def rule_memory(project_id: str, article_id: str | None = None):
+        return service.rule_memory(project_id, article_id)
+
+    @app.patch("/api/v1/rule-memory/{rule_id}")
+    def update_rule_memory(rule_id: str, request: RuleMemoryPatchRequest, project_id: str):
+        return service.update_rule_memory(project_id, rule_id, request.model_dump(exclude_none=True))
+
+    @app.delete("/api/v1/rule-memory/{rule_id}")
+    def delete_rule_memory(rule_id: str, project_id: str):
+        return service.delete_rule(project_id, rule_id, "extraction")
 
     @app.get("/api/v1/standardized-records")
     def standardized(project_id: str):
@@ -709,70 +1629,205 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
     def costs(project_id: str):
         return repo.costs(project_id)
 
+    @app.get("/api/v1/model-setup")
+    def model_setup():
+        return _model_setup_status(load_config())
+
+    @app.post("/api/v1/model-setup/test")
+    def test_model_setup(request: ModelSetupRequest):
+        config = load_config()
+        try:
+            provider, provider_name, model_name = _resolve_model_setup_provider(config, request.provider_preset, request.model_id, request.base_url)
+            result = _test_provider_config(provider, request.api_key, model_name)
+            result.update({
+                "success": True,
+                "provider": provider_name,
+                "provider_preset": _setup_preset_for_provider(provider_name),
+                "model": model_name,
+                "message": result.get("message") or "模型调用成功，尚未保存",
+            })
+            return result
+        except Exception as e:
+            return {
+                "success": False,
+                "provider": "",
+                "provider_preset": request.provider_preset,
+                "model": request.model_id,
+                "models": [],
+                "message": str(e),
+                "last_tested_at": datetime.now().isoformat(timespec="seconds"),
+            }
+
+    @app.put("/api/v1/model-setup")
+    def save_model_setup(request: ModelSetupRequest):
+        config = load_config()
+        provider, provider_name, model_name = _resolve_model_setup_provider(config, request.provider_preset, request.model_id, request.base_url)
+        test_result = _test_provider_config(provider, request.api_key, model_name)
+        if not test_result.get("success"):
+            raise HTTPException(400, test_result.get("message") or "模型测试失败，未保存")
+
+        if request.api_key:
+            if request.provider_preset == "opencode-go":
+                sibling_names = ("opencode-go-openai", "opencode-go-anthropic")
+            elif request.provider_preset == "deepseek":
+                sibling_names = ("deepseek-openai", "deepseek-anthropic")
+            elif request.provider_preset == "xiaomi":
+                sibling_names = ("xiaomi", "xiaomi-anthropic")
+            else:
+                sibling_names = (provider_name,)
+            for sibling_name in sibling_names:
+                if config.get_provider(sibling_name):
+                    _save_provider_secret(config, sibling_name, request.api_key)
+
+        _apply_single_model_routes(config, provider_name, model_name)
+        config.ui_preferences = dict(config.ui_preferences or {})
+        config.ui_preferences["model_setup"] = {
+            "success": True,
+            "provider": provider_name,
+            "provider_preset": _setup_preset_for_provider(provider_name),
+            "model": model_name,
+            "message": "已保存并应用到全部智能体文本任务",
+            "last_tested_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        save_config(config)
+        return _model_setup_status(config)
+
     @app.get("/api/v1/settings")
     def settings():
         config = load_config()
         default = config.get_task_model("_default")
         vision = config.task_models.get("figure_extraction")
-        providers = []
-        for provider in config.providers:
-            key_ref = provider.api_key or ""
-            env_name = key_ref[2:-1] if key_ref.startswith("${") and key_ref.endswith("}") else ""
-            providers.append({
-                "name": provider.name,
-                "display_name": provider.display_name or provider.name,
-                "key_status": "configured" if env_name and os.environ.get(env_name) else "missing" if env_name else "inline" if key_ref else "not_configured",
-                "env_name": env_name,
-                "models": [{"name": model.name, "display_name": model.display_name or model.name, "supports_vision": model.supports_vision} for model in provider.models],
-            })
+        providers = [_provider_public(provider) for provider in config.providers]
+        if default:
+            providers.sort(key=lambda item: 0 if item["name"] == default.provider else 1)
         return {
             "default_provider": default.provider if default else "",
             "default_model": default.model if default else "",
             "vision_provider": vision.provider if vision else "",
             "vision_model": vision.model if vision else "",
             "export_dir": config.ui_preferences.get("export_dir", ""),
+            "task_models": {
+                name: {
+                    "provider": task.provider,
+                    "model": task.model,
+                    "temperature": task.temperature,
+                    "max_tokens": task.max_tokens,
+                    "label": TASK_ROUTE_META.get(name, name),
+                }
+                for name, task in config.task_models.items()
+            },
+            "task_route_meta": TASK_ROUTE_META,
             "providers": providers,
         }
+
+    @app.get("/api/v1/provider-presets")
+    def provider_preset_list():
+        return [_provider_public(provider) for provider in provider_presets()]
 
     @app.put("/api/v1/settings")
     def update_settings(request: SettingsUpdateRequest):
         config = load_config()
-        default_provider_config = config.get_provider(request.default_provider)
-        if not default_provider_config or request.default_model not in {model.name for model in default_provider_config.models}:
+        if request.providers:
+            built_in = {provider.name for provider in config.providers if not provider.is_custom}
+            updated: list[ProviderConfig] = []
+            seen: set[str] = set()
+            existing_by_name = {provider.name: provider for provider in config.providers}
+            for item in request.providers:
+                provider = _provider_from_payload(item, existing_by_name.get(str(item.get("name") or "")))
+                if not provider.name:
+                    continue
+                if provider.name in built_in:
+                    provider.is_custom = False
+                updated.append(provider)
+                seen.add(provider.name)
+            for provider in config.providers:
+                if provider.name not in seen and not provider.is_custom:
+                    updated.append(provider)
+            config.providers = updated
+
+        default_provider_name, default_model_name = _normalize_provider_model(request.default_provider, request.default_model)
+        default_provider_config = config.get_provider(default_provider_name)
+        if not default_provider_config:
             raise HTTPException(400, "Unknown default provider/model")
+        _ensure_route_model(config, default_provider_name, default_model_name)
         if request.vision_provider or request.vision_model:
-            vision_provider_config = config.get_provider(request.vision_provider)
+            vision_provider_name, vision_model_name = _normalize_provider_model(request.vision_provider, request.vision_model)
+            vision_provider_config = config.get_provider(vision_provider_name)
+            _ensure_route_model(config, vision_provider_name, vision_model_name)
             vision_model_config = next(
-                (model for model in vision_provider_config.models if model.name == request.vision_model),
+                (model for model in vision_provider_config.models if model.name == vision_model_name),
                 None,
             ) if vision_provider_config else None
             if not vision_model_config or not vision_model_config.supports_vision:
                 raise HTTPException(400, "The selected figure-extraction model does not support vision")
         current = config.get_task_model("_default")
-        config.task_models["_default"] = TaskModelConfig(
-            provider=request.default_provider,
-            model=request.default_model,
-            temperature=current.temperature if current else 0.1,
-            max_tokens=current.max_tokens if current else 4096,
+        next_task_models = dict(config.task_models)
+        next_task_models["_default"] = TaskModelConfig(
+            provider=default_provider_name, model=default_model_name,
+            temperature=current.temperature if current else 0.1, max_tokens=current.max_tokens if current else 4096,
         )
+        for name, task_data in request.task_models.items():
+            provider_name, model_name = _normalize_provider_model(str(task_data.get("provider") or ""), str(task_data.get("model") or ""))
+            if not provider_name or not model_name:
+                continue
+            if not config.get_provider(provider_name):
+                raise HTTPException(400, f"Unknown provider for task {name}: {provider_name}")
+            _ensure_route_model(config, provider_name, model_name)
+            next_task_models[name] = TaskModelConfig(
+                provider=provider_name,
+                model=model_name,
+                temperature=float(task_data.get("temperature", next_task_models.get(name, current).temperature if next_task_models.get(name, current) else 0.1)),
+                max_tokens=int(task_data.get("max_tokens", next_task_models.get(name, current).max_tokens if next_task_models.get(name, current) else 4096)),
+            )
         if request.vision_provider and request.vision_model:
-            config.task_models["figure_extraction"] = TaskModelConfig(
-                provider=request.vision_provider,
-                model=request.vision_model,
+            vision_provider_name, vision_model_name = _normalize_provider_model(request.vision_provider, request.vision_model)
+            next_task_models["figure_extraction"] = TaskModelConfig(
+                provider=vision_provider_name,
+                model=vision_model_name,
                 temperature=0.0,
                 max_tokens=5000,
             )
         else:
-            config.task_models.pop("figure_extraction", None)
+            next_task_models.pop("figure_extraction", None)
+        config.task_models = next_task_models
         # Save API keys
         if request.api_keys:
             for provider_name, api_key in request.api_keys.items():
-                for provider in config.providers:
-                    if provider.name == provider_name:
-                        provider.api_key = api_key if api_key else None
-                        break
-        save_config(config, Path(os.environ.get("GEOCHEM_CONFIG", "config/settings.yaml")))
+                if api_key and config.get_provider(provider_name):
+                    _save_provider_secret(config, provider_name, api_key)
+        save_config(config)
         return {"status": "saved"}
+
+    @app.post("/api/v1/providers/{name}/models")
+    def add_provider_model(name: str, request: ProviderModelRequest):
+        config = load_config()
+        provider_name, model_name = _normalize_provider_model(name, request.name)
+        provider = config.get_provider(provider_name)
+        if not provider:
+            raise HTTPException(404, "Provider not found")
+        _upsert_model(provider, ModelConfig(
+            name=model_name,
+            display_name=request.display_name or model_name,
+            max_tokens=request.max_tokens,
+            supports_vision=request.supports_vision,
+        ))
+        save_config(config)
+        return _provider_public(provider)
+
+    @app.delete("/api/v1/providers/{name}")
+    def delete_provider(name: str):
+        config = load_config()
+        provider = config.get_provider(name)
+        if not provider:
+            raise HTTPException(404, "Provider not found")
+        if not provider.is_custom:
+            raise HTTPException(400, "Only custom providers can be deleted")
+        config.providers = [item for item in config.providers if item.name != name]
+        for task_name, task in list(config.task_models.items()):
+            if task.provider == name:
+                config.task_models.pop(task_name, None)
+        save_config(config)
+        return {"status": "deleted"}
 
     @app.get("/api/v1/export-directory")
     def export_directory(project_id: str):
@@ -789,14 +1844,13 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
 
     @app.put("/api/v1/export-directory")
     def update_export_directory(request: ExportDirectoryRequest):
-        config_path = Path(os.environ.get("GEOCHEM_CONFIG", "config/settings.yaml"))
-        config = load_config(config_path)
+        config = load_config()
         config.ui_preferences = dict(config.ui_preferences or {})
         if request.path.strip():
             config.ui_preferences["export_dir"] = request.path.strip()
         else:
             config.ui_preferences.pop("export_dir", None)
-        save_config(config, config_path)
+        save_config(config)
         return {"path": config.ui_preferences.get("export_dir", ""), "status": "saved"}
 
     @app.post("/api/v1/export-directory/open")

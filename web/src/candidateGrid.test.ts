@@ -4,7 +4,7 @@ import type { BatchPayload } from './types'
 
 describe('candidate grid', () => {
   it('keeps the required workbench order', () => {
-    expect(WORKBENCH_STEPS).toEqual(['自动资源发现', '原文校核与补充', '表头数据抽取', '映射与确认'])
+    expect(WORKBENCH_STEPS).toEqual(['自动资源发现', '原文核校与资源补充', '资源抽取与候选处理', '映射确认与质检'])
   })
 
   it('keeps exact target headers and fills missing cells with empty strings', () => {
@@ -24,4 +24,3 @@ describe('candidate grid', () => {
     expect(rows[0]['Al2O3(wt%)']).toBe('')
   })
 })
-

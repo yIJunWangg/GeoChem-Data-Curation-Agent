@@ -25,6 +25,10 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "python-multipart>=0.0.9",
+    "keyring>=25.0",
+    "langgraph>=1.0",
+    "langgraph-checkpoint-sqlite>=2.0",
+    "langchain>=1.0,<2.0",
 ]
 
 [project.optional-dependencies]

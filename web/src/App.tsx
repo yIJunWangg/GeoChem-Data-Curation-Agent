@@ -3,7 +3,7 @@ import { NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
   BarChart3, BookOpen, Bot, Database, FileInput, FileSpreadsheet, Gauge,
-  Columns3, GitBranch, MemoryStick, Settings, ShieldCheck,
+  Columns3, GitBranch, MemoryStick, MessageSquare, Settings, ShieldCheck,
 } from 'lucide-react'
 import { api } from './api'
 import { useAppStore } from './store'
@@ -11,12 +11,14 @@ import WorkbenchPage from './WorkbenchPage'
 import { CostPage, DashboardPage, HeaderPage, ImportPage, RulesPage, SettingsPage, StandardizedPage } from './Pages'
 import { ReviewPage } from './ReviewPage'
 import { TracePage } from './TracePage'
+import { ChatPage } from './ChatPage'
 
 const NAV = [
   ['/', '项目总览', Gauge],
   ['/headers', '表头配置', Columns3],
   ['/import', '文献导入', FileInput],
   ['/workbench', '智能体工作台', Bot],
+  ['/chat', '对话助手', MessageSquare],
   ['/review', '人工审核', ShieldCheck],
   ['/rules', '规则记忆', MemoryStick],
   ['/standardized', '标准化导出', FileSpreadsheet],
@@ -70,6 +72,7 @@ export default function App() {
             <Route path="/headers" element={<HeaderPage />} />
             <Route path="/import" element={<ImportPage />} />
             <Route path="/workbench" element={<WorkbenchPage />} />
+            <Route path="/chat" element={<ChatPage />} />
             <Route path="/review" element={<ReviewPage />} />
             <Route path="/rules" element={<RulesPage />} />
             <Route path="/standardized" element={<StandardizedPage />} />

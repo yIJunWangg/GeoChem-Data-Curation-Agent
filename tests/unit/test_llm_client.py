@@ -99,6 +99,27 @@ class TestLLMClient:
         assert "deepseek" in names
         assert "ollama" in names
 
+    def test_custom_openai_compatible_provider_initializes(self):
+        config = AppConfig(
+            providers=[
+                ProviderConfig(
+                    name="opencode-go",
+                    display_name="OpenCode GO",
+                    api_format="openai",
+                    base_url="https://example.invalid/v1",
+                    api_key="${OPENCODE_GO_API_KEY}",
+                    is_custom=True,
+                    models=[ModelConfig(name="go-plan")],
+                )
+            ],
+            task_models={"_default": TaskModelConfig(provider="opencode-go", model="go-plan")},
+        )
+        client = LLMClient(config)
+
+        provider = client.registry.get("opencode-go")
+        assert isinstance(provider, OpenAIProvider)
+        assert provider.name == "opencode-go"
+
 
 class TestProviderClasses:
     def test_openai_provider_init(self):

@@ -355,11 +355,20 @@ class LLMCallRecord(BaseModel):
     retry_count: int = 0
     request_summary: str = ""
     response_summary: str = ""
+    reasoning_present: bool = False
+    finish_reason: str = ""
+    config_version: str = ""
+    structured_status: str = ""
 
 
 class LLMResponse(BaseModel):
     """Standardized response from any LLM provider."""
+    # content is retained for compatibility. It must always contain final user-
+    # visible content, never hidden reasoning/thinking text.
     content: str = ""
+    final_content: str = ""
+    reasoning_present: bool = False
+    reasoning_token_count: int = 0
     model: str = ""
     provider: str = ""
     input_tokens: int = 0
@@ -368,6 +377,7 @@ class LLMResponse(BaseModel):
     total_tokens: int = 0
     finish_reason: str = ""
     latency_ms: int = 0
+    tool_calls: list[dict[str, Any]] = Field(default_factory=list)
     raw_response: dict[str, Any] = Field(default_factory=dict)
 
 

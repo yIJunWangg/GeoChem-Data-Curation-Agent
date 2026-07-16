@@ -359,6 +359,8 @@ CREATE TABLE IF NOT EXISTS learned_extraction_rules (
     risk_level    TEXT DEFAULT 'medium',
     review_status TEXT DEFAULT 'confirmed',
     scope         TEXT DEFAULT 'project',
+    enabled       INTEGER DEFAULT 1,
+    element_id    TEXT DEFAULT '',
     created_at    TEXT NOT NULL,
     created_by    TEXT DEFAULT 'agent',
     FOREIGN KEY (project_id) REFERENCES projects(project_id)
@@ -420,6 +422,7 @@ CREATE TABLE IF NOT EXISTS document_elements (
     element_type     TEXT NOT NULL,
     page_number      INTEGER,
     bbox_json        TEXT DEFAULT '[]',
+    page_spans_json  TEXT DEFAULT '[]',
     text_content     TEXT DEFAULT '',
     context_text     TEXT DEFAULT '',
     caption          TEXT DEFAULT '',
@@ -427,6 +430,11 @@ CREATE TABLE IF NOT EXISTS document_elements (
     raw_table_json   TEXT DEFAULT '{}',
     matched_headers_json TEXT DEFAULT '[]',
     relevance_score REAL DEFAULT 0.0,
+    score_reasons_json TEXT DEFAULT '[]',
+    reading_order    INTEGER DEFAULT 0,
+    section_path     TEXT DEFAULT '',
+    source_backend   TEXT DEFAULT '',
+    merge_reason     TEXT DEFAULT '',
     content_hash     TEXT DEFAULT '',
     parser_version   TEXT DEFAULT 'layout-v1',
     status           TEXT DEFAULT 'candidate',
@@ -512,6 +520,13 @@ CREATE TABLE IF NOT EXISTS candidate_cells (
     risk_level       TEXT DEFAULT 'medium',
     mapping_status   TEXT DEFAULT 'pending',
     mapping_id       TEXT,
+    applied_rule_id  TEXT DEFAULT '',
+    extraction_method TEXT DEFAULT '',
+    source_label     TEXT DEFAULT '',
+    source_quote     TEXT DEFAULT '',
+    source_row_snapshot TEXT DEFAULT '{}',
+    evidence_status  TEXT DEFAULT 'weak',
+    evidence_reason  TEXT DEFAULT '',
     element_id       TEXT,
     page_number      INTEGER,
     bbox_json        TEXT DEFAULT '[]',
@@ -551,6 +566,195 @@ CREATE TABLE IF NOT EXISTS workflow_task_events (
     FOREIGN KEY (task_id) REFERENCES workflow_tasks(task_id)
 );
 
+-- Conversational agent audit records. LangGraph checkpoints intentionally live in a
+-- separate SQLite file so long-running graph state does not contend with curation writes.
+CREATE TABLE IF NOT EXISTS chat_threads (
+    thread_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    article_id TEXT,
+    title TEXT DEFAULT '',
+    scope TEXT DEFAULT 'article',
+    selection_context_json TEXT DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (project_id) REFERENCES projects(project_id)
+);
+
+CREATE TABLE IF NOT EXISTS chat_messages (
+    message_id TEXT PRIMARY KEY,
+    thread_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    status TEXT DEFAULT 'completed',
+    model_provider TEXT DEFAULT '',
+    model_name TEXT DEFAULT '',
+    agent_run_id TEXT DEFAULT '',
+    ui_payload_json TEXT DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (thread_id) REFERENCES chat_threads(thread_id)
+);
+
+CREATE TABLE IF NOT EXISTS chat_citations (
+    citation_id TEXT PRIMARY KEY,
+    message_id TEXT NOT NULL,
+    document_id TEXT DEFAULT '',
+    article_id TEXT DEFAULT '',
+    record_id TEXT DEFAULT '',
+    cell_id TEXT DEFAULT '',
+    element_id TEXT DEFAULT '',
+    label TEXT DEFAULT '',
+    payload_json TEXT DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (message_id) REFERENCES chat_messages(message_id)
+);
+
+CREATE TABLE IF NOT EXISTS agent_runs (
+    run_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    article_id TEXT,
+    thread_id TEXT,
+    status TEXT DEFAULT 'pending',
+    current_node TEXT DEFAULT '',
+    pending_interrupt_json TEXT DEFAULT '{}',
+    state_summary_json TEXT DEFAULT '{}',
+    skill_version TEXT DEFAULT '',
+    prompt_version TEXT DEFAULT '',
+    rule_snapshot_json TEXT DEFAULT '{}',
+    workflow_step TEXT DEFAULT '',
+    checkpoint_kind TEXT DEFAULT '',
+    workbench_handoff_status TEXT DEFAULT '',
+    workbench_snapshot_json TEXT DEFAULT '{}',
+    handoff_context_json TEXT DEFAULT '{}',
+    workbench_diff_json TEXT DEFAULT '{}',
+    data_version TEXT DEFAULT '',
+    run_kind TEXT DEFAULT 'conversation',
+    model_provider TEXT DEFAULT '',
+    model_name TEXT DEFAULT '',
+    selection_context_json TEXT DEFAULT '{}',
+    error_message TEXT DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (project_id) REFERENCES projects(project_id),
+    FOREIGN KEY (thread_id) REFERENCES chat_threads(thread_id)
+);
+
+-- Public acquisition candidates are intentionally separate from articles: an
+-- article is only created after a user confirms the candidate.
+CREATE TABLE IF NOT EXISTS article_source_candidates (
+    source_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    input_value TEXT NOT NULL,
+    doi TEXT DEFAULT '',
+    title TEXT DEFAULT '',
+    authors_json TEXT DEFAULT '[]',
+    year INTEGER,
+    journal TEXT DEFAULT '',
+    source_url TEXT DEFAULT '',
+    pdf_url TEXT DEFAULT '',
+    source_kind TEXT DEFAULT '',
+    access_status TEXT DEFAULT 'unavailable',
+    validation_message TEXT DEFAULT '',
+    metadata_json TEXT DEFAULT '{}',
+    user_confirmed INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (project_id) REFERENCES projects(project_id)
+);
+
+CREATE TABLE IF NOT EXISTS agent_interrupts (
+    interrupt_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    node_name TEXT NOT NULL,
+    payload_json TEXT DEFAULT '{}',
+    response_json TEXT DEFAULT '{}',
+    status TEXT DEFAULT 'pending',
+    created_at TEXT NOT NULL,
+    resolved_at TEXT,
+    FOREIGN KEY (run_id) REFERENCES agent_runs(run_id)
+);
+
+CREATE TABLE IF NOT EXISTS agent_run_events (
+    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL,
+    level TEXT DEFAULT 'INFO',
+    message TEXT NOT NULL,
+    details_json TEXT DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (run_id) REFERENCES agent_runs(run_id)
+);
+
+CREATE TABLE IF NOT EXISTS agent_tool_calls (
+    tool_call_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    thread_id TEXT DEFAULT '',
+    project_id TEXT NOT NULL,
+    article_id TEXT DEFAULT '',
+    tool_name TEXT NOT NULL,
+    permission_level TEXT DEFAULT 'read',
+    input_summary_json TEXT DEFAULT '{}',
+    output_summary_json TEXT DEFAULT '{}',
+    status TEXT DEFAULT 'pending',
+    error_message TEXT DEFAULT '',
+    idempotency_key TEXT DEFAULT '',
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    FOREIGN KEY (run_id) REFERENCES agent_runs(run_id)
+);
+
+CREATE TABLE IF NOT EXISTS literature_search_runs (
+    search_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    thread_id TEXT DEFAULT '',
+    query TEXT NOT NULL,
+    sort_mode TEXT DEFAULT 'relevance',
+    providers_json TEXT DEFAULT '[]',
+    errors_json TEXT DEFAULT '[]',
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS literature_search_results (
+    result_id TEXT PRIMARY KEY,
+    search_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    doi TEXT DEFAULT '',
+    authors_json TEXT DEFAULT '[]',
+    year INTEGER,
+    venue TEXT DEFAULT '',
+    landing_url TEXT DEFAULT '',
+    pdf_url TEXT DEFAULT '',
+    open_access INTEGER DEFAULT 0,
+    provider TEXT DEFAULT '',
+    metadata_json TEXT DEFAULT '{}',
+    selected INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (search_id) REFERENCES literature_search_runs(search_id)
+);
+
+CREATE TABLE IF NOT EXISTS retrieval_documents (
+    document_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    article_id TEXT DEFAULT '',
+    document_type TEXT NOT NULL,
+    resource_id TEXT DEFAULT '',
+    element_id TEXT DEFAULT '',
+    record_id TEXT DEFAULT '',
+    cell_id TEXT DEFAULT '',
+    content TEXT NOT NULL,
+    metadata_json TEXT DEFAULT '{}',
+    content_hash TEXT DEFAULT '',
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (project_id) REFERENCES projects(project_id)
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS retrieval_fts USING fts5(
+    document_id UNINDEXED,
+    content,
+    project_id UNINDEXED,
+    article_id UNINDEXED,
+    document_type UNINDEXED,
+    tokenize='unicode61'
+);
+
 CREATE TABLE IF NOT EXISTS llm_calls (
     call_id          TEXT PRIMARY KEY,
     project_id       TEXT DEFAULT '',
@@ -573,7 +777,22 @@ CREATE TABLE IF NOT EXISTS llm_calls (
     error_message    TEXT,
     retry_count      INTEGER DEFAULT 0,
     request_summary  TEXT DEFAULT '',
-    response_summary TEXT DEFAULT ''
+    response_summary TEXT DEFAULT '',
+    reasoning_present INTEGER DEFAULT 0,
+    finish_reason    TEXT DEFAULT '',
+    config_version   TEXT DEFAULT '',
+    structured_status TEXT DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS header_mapping_benchmarks (
+    benchmark_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    status TEXT DEFAULT 'completed',
+    metrics_json TEXT DEFAULT '{}',
+    config_version TEXT DEFAULT '',
+    created_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS processing_events (
@@ -607,6 +826,7 @@ CREATE INDEX IF NOT EXISTS idx_standardized_provenance_record ON standardized_ce
 CREATE INDEX IF NOT EXISTS idx_standardized_provenance_element ON standardized_cell_provenance(element_id);
 CREATE INDEX IF NOT EXISTS idx_llm_calls_project ON llm_calls(project_id);
 CREATE INDEX IF NOT EXISTS idx_llm_calls_article ON llm_calls(article_id);
+CREATE INDEX IF NOT EXISTS idx_header_mapping_benchmarks_project ON header_mapping_benchmarks(project_id);
 CREATE INDEX IF NOT EXISTS idx_processing_events_project ON processing_events(project_id);
 CREATE INDEX IF NOT EXISTS idx_teaching_events_project ON teaching_events(project_id);
 CREATE INDEX IF NOT EXISTS idx_learned_rules_project ON learned_extraction_rules(project_id);
@@ -621,6 +841,16 @@ CREATE INDEX IF NOT EXISTS idx_candidate_records_batch ON candidate_records(batc
 CREATE INDEX IF NOT EXISTS idx_candidate_cells_record ON candidate_cells(candidate_record_id);
 CREATE INDEX IF NOT EXISTS idx_workflow_tasks_project ON workflow_tasks(project_id);
 CREATE INDEX IF NOT EXISTS idx_workflow_task_events_task ON workflow_task_events(task_id);
+CREATE INDEX IF NOT EXISTS idx_chat_threads_scope ON chat_threads(project_id, article_id, updated_at);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_thread ON chat_messages(thread_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_chat_citations_message ON chat_citations(message_id);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_article ON agent_runs(project_id, article_id, status);
+CREATE INDEX IF NOT EXISTS idx_article_source_candidates_project ON article_source_candidates(project_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_agent_interrupts_run ON agent_interrupts(run_id, status);
+CREATE INDEX IF NOT EXISTS idx_agent_events_run ON agent_run_events(run_id, event_id);
+CREATE INDEX IF NOT EXISTS idx_agent_tool_calls_run ON agent_tool_calls(run_id, started_at);
+CREATE INDEX IF NOT EXISTS idx_literature_results_search ON literature_search_results(search_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_retrieval_documents_scope ON retrieval_documents(project_id, article_id, document_type);
 """
 
 
@@ -634,9 +864,10 @@ class Database:
     def connect(self) -> sqlite3.Connection:
         if self._conn is None:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
-            self._conn = sqlite3.connect(str(self.db_path))
+            self._conn = sqlite3.connect(str(self.db_path), timeout=30)
             self._conn.row_factory = sqlite3.Row
             self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA busy_timeout=30000")
             self._conn.execute("PRAGMA foreign_keys=ON")
         return self._conn
 
@@ -665,6 +896,52 @@ class Database:
         self._ensure_table_columns(conn, "calculation_records", {
             "candidate_record_id": "TEXT",
             "cell_id": "TEXT",
+        })
+        self._ensure_table_columns(conn, "document_elements", {
+            "page_spans_json": "TEXT DEFAULT '[]'",
+            "reading_order": "INTEGER DEFAULT 0",
+            "section_path": "TEXT DEFAULT ''",
+            "source_backend": "TEXT DEFAULT ''",
+            "merge_reason": "TEXT DEFAULT ''",
+            "score_reasons_json": "TEXT DEFAULT '[]'",
+        })
+        self._ensure_table_columns(conn, "learned_extraction_rules", {
+            "enabled": "INTEGER DEFAULT 1",
+            "element_id": "TEXT DEFAULT ''",
+        })
+        self._ensure_table_columns(conn, "candidate_cells", {
+            "applied_rule_id": "TEXT DEFAULT ''",
+            "extraction_method": "TEXT DEFAULT ''",
+            "source_label": "TEXT DEFAULT ''",
+            "source_quote": "TEXT DEFAULT ''",
+            "source_row_snapshot": "TEXT DEFAULT '{}'",
+            "evidence_status": "TEXT DEFAULT 'weak'",
+            "evidence_reason": "TEXT DEFAULT ''",
+        })
+        self._ensure_table_columns(conn, "llm_calls", {
+            "reasoning_present": "INTEGER DEFAULT 0",
+            "finish_reason": "TEXT DEFAULT ''",
+            "config_version": "TEXT DEFAULT ''",
+            "structured_status": "TEXT DEFAULT ''",
+        })
+        self._ensure_table_columns(conn, "agent_runs", {
+            "workflow_step": "TEXT DEFAULT ''",
+            "checkpoint_kind": "TEXT DEFAULT ''",
+            "workbench_handoff_status": "TEXT DEFAULT ''",
+            "workbench_snapshot_json": "TEXT DEFAULT '{}'",
+            "selection_context_json": "TEXT DEFAULT '{}'",
+            "handoff_context_json": "TEXT DEFAULT '{}'",
+            "workbench_diff_json": "TEXT DEFAULT '{}'",
+            "data_version": "TEXT DEFAULT ''",
+            "run_kind": "TEXT DEFAULT 'conversation'",
+            "model_provider": "TEXT DEFAULT ''",
+            "model_name": "TEXT DEFAULT ''",
+        })
+        self._ensure_table_columns(conn, "chat_threads", {
+            "selection_context_json": "TEXT DEFAULT '{}'",
+        })
+        self._ensure_table_columns(conn, "chat_messages", {
+            "ui_payload_json": "TEXT DEFAULT '{}'",
         })
 
     def _ensure_table_columns(self, conn: sqlite3.Connection, table: str, additions: dict[str, str]) -> None:

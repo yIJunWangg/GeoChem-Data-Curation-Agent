@@ -231,7 +231,7 @@ export function ReviewPage() {
 export function RulesPage() {
   const { projectId } = useAppStore()
   const queryClient = useQueryClient()
-  const rules = useQuery({ queryKey: ['rules', projectId], queryFn: () => api.rules(projectId), enabled: Boolean(projectId) })
+  const rules = useQuery({ queryKey: ['rules', projectId], queryFn: () => api.ruleMemory(projectId), enabled: Boolean(projectId) })
   const headers = useQuery({ queryKey: ['headers', projectId], queryFn: () => api.headers(projectId), enabled: Boolean(projectId) })
   const [configFilter, setConfigFilter] = useState('')
   const [tab, setTab] = useState<'mapping' | 'extraction'>('mapping')
@@ -242,7 +242,12 @@ export function RulesPage() {
 
   const doDelete = async (ruleId: string) => {
     if (!confirm('确定要删除这条规则吗？')) return
-    await api.deleteRule(projectId, ruleId, tab)
+    if (tab === 'extraction') await api.deleteRuleMemory(projectId, ruleId)
+    else await api.deleteRule(projectId, ruleId, tab)
+    queryClient.invalidateQueries({ queryKey: ['rules', projectId] })
+  }
+  const toggleExtractionRule = async (rule: Record<string, unknown>) => {
+    await api.updateRuleMemory(projectId, rule.rule_id as string, { enabled: !(rule.enabled as boolean) })
     queryClient.invalidateQueries({ queryKey: ['rules', projectId] })
   }
 
@@ -253,14 +258,15 @@ export function RulesPage() {
       <button className={tab === 'extraction' ? 'active' : ''} onClick={() => setTab('extraction')}>抽取规则 ({extractionRules.length})</button>
     </div>
     <section className="panel">
-      <table className="simple-table"><thead><tr><th>来源字段</th><th>目标字段</th><th>单位</th><th>公式</th><th>类型</th><th>操作</th></tr></thead>
+      <table className="simple-table"><thead><tr><th>规则 / 来源字段</th><th>目标字段</th><th>单位</th><th>范围</th><th>类型</th><th>状态</th><th>操作</th></tr></thead>
       <tbody>{currentRules.map((rule: Record<string,unknown>) => <tr key={rule.rule_id as string}>
-        <td>{String(rule.source_field || rule.target_field || '—')}</td>
-        <td>{String(rule.target_field || '—')}</td>
+        <td>{String(rule.source_field || rule.pattern || rule.target_field || '—')}</td>
+        <td>{String(rule.target_header || rule.target_field || '—')}</td>
         <td>{String(rule.target_unit || '—')}</td>
-        <td>{String(rule.formula || '—')}</td>
+        <td>{tab === 'mapping' ? String(rule.scope || 'project') : String(rule.scope || 'article')}</td>
         <td>{tab === 'mapping' ? String(rule.mapping_type || '—') : String(rule.rule_type || '—')}</td>
-        <td><button className="danger-button" onClick={() => doDelete(rule.rule_id as string)}>删除</button></td>
+        <td>{tab === 'extraction' ? ((rule.enabled as boolean) === false ? '停用' : '启用') : String(rule.review_status || 'confirmed')}</td>
+        <td><div className="table-actions">{tab === 'extraction' && <button onClick={() => toggleExtractionRule(rule)}>{(rule.enabled as boolean) === false ? '启用' : '停用'}</button>}<button className="danger-button" onClick={() => doDelete(rule.rule_id as string)}>删除</button></div></td>
       </tr>)}</tbody></table>
       {!currentRules.length && <div className="empty-state compact">暂无规则。映射确认时修改的内容会自动保存为规则。</div>}
     </section>
@@ -388,37 +394,160 @@ export function CostPage() {
 export function SettingsPage() {
   const queryClient = useQueryClient()
   const settings = useQuery({ queryKey: ['settings'], queryFn: api.settings })
-  const [textProvider, setTextProvider] = useState('')
-  const [textModel, setTextModel] = useState('')
-  const [visionProvider, setVisionProvider] = useState('')
-  const [visionModel, setVisionModel] = useState('')
+  const modelSetup = useQuery({ queryKey: ['model-setup'], queryFn: api.modelSetup })
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({})
   const [liveModels, setLiveModels] = useState<Record<string, {name:string;display_name:string;supports_vision:boolean}[]>>({})
-  const [testing, setTesting] = useState<Record<string, string>>({})
+  const [, setTesting] = useState<Record<string, string>>({})
   const [activeTab, setActiveTab] = useState('model')
+  const [setupTesting, setSetupTesting] = useState(false)
+  const [setupLog, setSetupLog] = useState('')
+  const [setupForm, setSetupForm] = useState({ provider_preset: 'opencode-go', model_id: '', api_key: '', base_url: '' })
+  const [providersDraft, setProvidersDraft] = useState<any[]>([])
+  const [taskRoutes, setTaskRoutes] = useState<Record<string, any>>({})
+  const [activeProvider, setActiveProvider] = useState('')
+  const [newModelName, setNewModelName] = useState('')
+  const [customProvider, setCustomProvider] = useState({
+    name: 'opencode-go',
+    display_name: 'OpenCode GO',
+    api_format: 'openai',
+    base_url: '',
+    api_key_ref: '${OPENCODE_GO_API_KEY}',
+    auth_type: 'bearer',
+    api_key_header: 'Authorization',
+    model: 'go-plan',
+  })
 
-  const providers = settings.data?.providers || []
-  const selectedText = textProvider || settings.data?.default_provider || ''
-  const selectedVision = visionProvider || settings.data?.vision_provider || ''
-  const textModelSel = textModel || settings.data?.default_model || ''
-  const visionModelSel = visionModel || settings.data?.vision_model || ''
+  useEffect(() => {
+    if (!settings.data) return
+    setProvidersDraft(settings.data.providers || [])
+    setTaskRoutes(settings.data.task_models || {
+      _default: { provider: settings.data.default_provider, model: settings.data.default_model, temperature: 0.1, max_tokens: 4096 },
+    })
+    setActiveProvider((settings.data.providers || [])[0]?.name || '')
+  }, [settings.data])
+
+  useEffect(() => {
+    if (!modelSetup.data) return
+    setSetupForm(prev => ({
+      ...prev,
+      provider_preset: modelSetup.data.provider_preset || prev.provider_preset || 'opencode-go',
+      model_id: modelSetup.data.model || prev.model_id || '',
+      base_url: '',
+    }))
+  }, [modelSetup.data])
 
   const getModels = (providerName: string) => {
     if (liveModels[providerName]) return liveModels[providerName]
-    const p = providers.find((x: any) => x.name === providerName)
+    const p = providersDraft.find((x: any) => x.name === providerName)
     return p?.models || []
   }
 
-  const setKey = (provider: string, value: string) => setApiKeys(prev => ({...prev, [provider]: value}))
+  const setupPresets = modelSetup.data?.presets || [
+    { id: 'opencode-go', label: 'OpenCode Go' },
+    { id: 'deepseek', label: 'DeepSeek' },
+    { id: 'xiaomi', label: 'Xiaomi MiMo' },
+    { id: 'openrouter', label: 'OpenRouter' },
+    { id: 'openai', label: 'OpenAI' },
+    { id: 'anthropic', label: 'Anthropic' },
+    { id: 'custom-openai', label: '自定义 OpenAI-compatible' },
+    { id: 'custom-anthropic', label: '自定义 Anthropic-compatible' },
+  ]
+  const routeKeys = Object.keys(settings.data?.task_route_meta || { _default: '默认文本模型', field_mapping: '字段映射', document_record_extraction: '文献/段落抽取', unit_suggestion: '单位换算建议', rule_learning: '规则学习', figure_extraction: '图像处理' })
+  const updateRoute = (name: string, patch: Record<string, unknown>) => setTaskRoutes(prev => ({...prev, [name]: {...(prev[name] || {}), ...patch}}))
+  const activeProviderData = providersDraft.find((provider: any) => provider.name === activeProvider)
+  const upsertProviderDraft = (provider: any) => setProvidersDraft(prev => {
+    const exists = prev.some((item: any) => item.name === provider.name)
+    return exists ? prev.map((item: any) => item.name === provider.name ? provider : item) : [...prev, provider]
+  })
+  const addModelToProvider = () => {
+    if (!activeProviderData || !newModelName.trim()) return
+    const model = { name: newModelName.trim(), display_name: newModelName.trim(), supports_vision: false, max_tokens: 4096 }
+    upsertProviderDraft({...activeProviderData, models: [...(activeProviderData.models || []).filter((m: any) => m.name !== model.name), model]})
+    setNewModelName('')
+  }
+  const toggleModelVision = (modelName: string) => {
+    if (!activeProviderData) return
+    upsertProviderDraft({...activeProviderData, models: (activeProviderData.models || []).map((m: any) => m.name === modelName ? {...m, supports_vision: !m.supports_vision} : m)})
+  }
+  const updateActiveProvider = (patch: Record<string, unknown>) => {
+    if (!activeProviderData) return
+    upsertProviderDraft({...activeProviderData, ...patch})
+  }
+  const applyProviderTemplate = (kind: 'openai' | 'anthropic') => {
+    setCustomProvider({
+      name: kind === 'openai' ? 'custom-openai-compatible' : 'custom-anthropic-compatible',
+      display_name: kind === 'openai' ? '自定义 OpenAI-compatible' : '自定义 Anthropic-compatible',
+      api_format: kind,
+      base_url: '',
+      api_key_ref: kind === 'openai' ? '${CUSTOM_OPENAI_API_KEY}' : '${CUSTOM_ANTHROPIC_API_KEY}',
+      auth_type: 'bearer',
+      api_key_header: 'Authorization',
+      model: '',
+    })
+  }
+  const setupProviderNames = (preset: string) => {
+    if (preset === 'opencode-go') return ['opencode-go-openai', 'opencode-go-anthropic']
+    if (preset === 'deepseek') return ['deepseek-openai', 'deepseek-anthropic']
+    if (preset === 'xiaomi') return ['xiaomi', 'xiaomi-anthropic']
+    if (preset === 'custom-openai') return ['custom-openai-compatible']
+    if (preset === 'custom-anthropic') return ['custom-anthropic-compatible']
+    return [preset]
+  }
+  const setupModelOptions = Array.from(new Set(setupProviderNames(setupForm.provider_preset).flatMap(name => (providersDraft.find((p: any) => p.name === name)?.models || []).map((model: any) => model.name))))
+  const isCustomSetup = setupForm.provider_preset.startsWith('custom-')
+  const keyStatusText = modelSetup.data?.key_status_label || (
+    modelSetup.data?.key_status === 'configured' ? '已配置' :
+    modelSetup.data?.key_status === 'missing' ? '等待环境变量或钥匙串' :
+    modelSetup.data?.key_status === 'inline' ? '需要迁移明文 Key' : '未配置'
+  )
+  const runSetup = async (saveIt: boolean) => {
+    if (!setupForm.provider_preset || !setupForm.model_id.trim()) {
+      setSetupLog('请选择服务商并输入模型 ID。')
+      return
+    }
+    setSetupTesting(true)
+    setSetupLog(saveIt ? '正在测试并保存模型配置...' : '正在测试模型配置...')
+    try {
+      const payload = {...setupForm, model_id: setupForm.model_id.trim()}
+      const result = saveIt ? await api.saveModelSetup(payload) : await api.testModelSetup(payload)
+      if (result.success === false) {
+        setSetupLog(result.message || '测试失败')
+      } else {
+        setSetupLog(result.last_test?.message || result.message || (saveIt ? '已保存并应用到全部智能体任务。' : '测试通过，尚未保存。'))
+        setSetupForm(prev => ({...prev, api_key: ''}))
+        queryClient.invalidateQueries({queryKey:['settings']})
+        queryClient.invalidateQueries({queryKey:['model-setup']})
+      }
+    } catch (err) {
+      setSetupLog(err instanceof Error ? err.message : '测试失败')
+    } finally {
+      setSetupTesting(false)
+    }
+  }
 
   const testConnection = async (providerName: string) => {
     const key = apiKeys[providerName]
-    if (!key) { alert('请先输入 API Key'); return }
+    const provider = providersDraft.find((item: any) => item.name === providerName)
+    if (!key && !provider?.api_key_ref) { alert('请先输入 API Key 或配置环境变量占位'); return }
     setTesting(prev => ({...prev, [providerName]: 'testing'}))
     try {
-      const result = await api.testProvider(providerName, key)
+      const result = await api.testCustomProvider({
+        provider: providerName,
+        display_name: provider?.display_name || providerName,
+        api_format: provider?.api_format || 'openai',
+        base_url: provider?.base_url || '',
+        api_key_ref: provider?.api_key_ref || '',
+        api_key: key,
+        model: provider?.models?.[0]?.name || '',
+        default_headers: provider?.default_headers || {},
+        auth_type: provider?.auth_type || 'bearer',
+        api_key_header: provider?.api_key_header || 'Authorization',
+      })
       if (result.success) {
         setLiveModels(prev => ({...prev, [providerName]: result.models}))
+        if (result.models.length && provider) {
+          upsertProviderDraft({...provider, models: result.models})
+        }
         setTesting(prev => ({...prev, [providerName]: 'ok'}))
       } else {
         setTesting(prev => ({...prev, [providerName]: 'fail'}))
@@ -431,9 +560,15 @@ export function SettingsPage() {
   const save = async () => {
     const keys: Record<string, string> = {}
     for (const [n, v] of Object.entries(apiKeys)) { if (v) keys[n] = v }
+    const defaultRoute = taskRoutes._default || {}
+    const visionRoute = taskRoutes.figure_extraction || {}
     await api.saveSettings({
-      default_provider: selectedText, default_model: textModelSel,
-      vision_provider: selectedVision, vision_model: visionModelSel,
+      default_provider: defaultRoute.provider || settings.data?.default_provider || '',
+      default_model: defaultRoute.model || settings.data?.default_model || '',
+      vision_provider: visionRoute.provider || '',
+      vision_model: visionRoute.model || '',
+      task_models: taskRoutes,
+      providers: providersDraft,
       api_keys: keys,
     })
     setApiKeys({}); setLiveModels({}); setTesting({})
@@ -441,12 +576,31 @@ export function SettingsPage() {
   }
 
   const TABS = [
-    { key: 'model', label: '模型路由', icon: '🧠' },
-    { key: 'keys', label: 'API Key', icon: '🔑' },
+    { key: 'model', label: '模型配置', icon: '🧠' },
+    { key: 'advanced', label: '高级设置', icon: '🧩' },
     { key: 'service', label: '本地服务', icon: '🖥' },
   ]
 
-  return <div className="page"><PageHeader title="设置" subtitle="选择服务商、输入 Key、测试连接、选择模型。" action={<button className="primary-button" onClick={save}>保存所有设置</button>} />
+  const addCustomProvider = () => {
+    const provider = {
+      name: customProvider.name.trim(),
+      display_name: customProvider.display_name.trim() || customProvider.name.trim(),
+      api_format: customProvider.api_format,
+      base_url: customProvider.base_url.trim(),
+      api_key_ref: customProvider.api_key_ref.trim(),
+      enabled: true,
+      is_custom: true,
+      auth_type: customProvider.auth_type,
+      api_key_header: customProvider.api_key_header,
+      default_headers: {},
+      models: customProvider.model.trim() ? [{ name: customProvider.model.trim(), display_name: customProvider.model.trim(), supports_vision: false, max_tokens: 4096 }] : [],
+    }
+    if (!provider.name) return
+    upsertProviderDraft(provider)
+    setActiveProvider(provider.name)
+  }
+
+  return <div className="page"><PageHeader title="设置" subtitle="配置一个可用模型，GeoChem 会把它应用到全部智能体文本任务。" action={activeTab === 'advanced' ? <button className="primary-button" onClick={save}>保存高级设置</button> : undefined} />
     <div className="settings-layout">
       <nav className="panel settings-nav">
         {TABS.map(tab => <button key={tab.key} className={activeTab === tab.key ? 'active' : ''} onClick={() => setActiveTab(tab.key)}>
@@ -455,76 +609,38 @@ export function SettingsPage() {
       </nav>
       <div className="settings-body">
 
-        {activeTab === 'model' && <>
-          <section className="panel settings-card">
-            <h2>🧠 默认文本模型</h2>
-            <p className="card-desc">字段映射、段落抽取和规则学习使用此模型。</p>
-            <div className="model-select-row">
-              <div className="model-select-item">
-                <label>服务商</label>
-                <select value={selectedText} onChange={(e) => { setTextProvider(e.target.value); setTextModel('') }}>
-                  {providers.map((p: any) => <option key={p.name} value={p.name}>{p.display_name}</option>)}
-                </select>
-              </div>
-              <div className="model-select-item">
-                <label>模型 <small style={{color:'#53637a',fontWeight:400}}>可手动输入</small></label>
-                <input type="text" list="text-models" value={textModelSel} onChange={(e) => setTextModel(e.target.value)} placeholder="选择或输入模型名称..." />
-                <datalist id="text-models">
-                  {getModels(selectedText).map((m: any) => <option key={m.name} value={m.name}>{m.display_name || m.name}</option>)}
-                </datalist>
-              </div>
+        {activeTab === 'model' && <div className="model-setup-page">
+          <section className={`panel model-status-card ${modelSetup.data?.configured ? 'configured' : ''}`}>
+            <div>
+              <h2>{modelSetup.data?.configured ? '模型已配置' : '模型尚未完整配置'}</h2>
+              <p>{modelSetup.data?.configured ? `${modelSetup.data.provider_label || modelSetup.data.provider} / ${modelSetup.data.model}` : '选择服务商、输入模型 ID 和 API Key 后即可使用。'}</p>
+            </div>
+            <div className="model-status-grid">
+              <span><small>Key 状态</small><strong>{keyStatusText}</strong></span>
+              <span><small>任务应用</small><strong>{modelSetup.data?.all_text_tasks_use_same_model ? '全部文本任务' : '尚未统一'}</strong></span>
+              <span><small>最近测试</small><strong>{modelSetup.data?.last_test?.last_tested_at || '--'}</strong></span>
             </div>
           </section>
-
-          <section className="panel settings-card">
-            <h2>👁 图像抽取模型</h2>
-            <p className="card-desc">用于从图表中提取数据，必须选择支持 vision 的模型。</p>
-            <div className="model-select-row">
-              <div className="model-select-item">
-                <label>服务商</label>
-                <select value={selectedVision} onChange={(e) => { setVisionProvider(e.target.value); setVisionModel('') }}>
-                  <option value="">未配置</option>
-                  {providers.map((p: any) => <option key={p.name} value={p.name}>{p.display_name}</option>)}
-                </select>
-              </div>
-              <div className="model-select-item">
-                <label>模型 <small style={{color:'#53637a',fontWeight:400}}>可手动输入</small></label>
-                <input type="text" list="vision-models" value={visionModelSel} onChange={(e) => setVisionModel(e.target.value)} placeholder="选择或输入模型名称..." />
-                <datalist id="vision-models">
-                  {getModels(selectedVision).filter((m: any) => m.supports_vision).map((m: any) => <option key={m.name} value={m.name}>{m.display_name || m.name}</option>)}
-                </datalist>
-              </div>
+          <section className="panel settings-card model-setup-card">
+            <h2>模型配置</h2>
+            <p className="card-desc">普通情况下只需要配置一个模型。保存后字段映射、文献抽取、规则学习等文本任务都会使用它。</p>
+            <div className="simple-model-form">
+              <label>服务商<select value={setupForm.provider_preset} onChange={(e) => setSetupForm({...setupForm, provider_preset: e.target.value, model_id: '', base_url: ''})}>{setupPresets.map((preset: any) => <option key={preset.id} value={preset.id}>{preset.label}</option>)}</select></label>
+              {isCustomSetup && <label>Base URL<input value={setupForm.base_url} onChange={(e) => setSetupForm({...setupForm, base_url: e.target.value})} placeholder="https://.../v1" /></label>}
+              <label>模型 ID<input list="setup-models" value={setupForm.model_id} onChange={(e) => setSetupForm({...setupForm, model_id: e.target.value})} placeholder="例如 kimi-k2.7-code" /></label>
+              <datalist id="setup-models">{setupModelOptions.map(name => <option key={name} value={name} />)}</datalist>
+              <label>API Key<input type="password" value={setupForm.api_key} onChange={(e) => setSetupForm({...setupForm, api_key: e.target.value})} placeholder={modelSetup.data?.key_status === 'configured' ? '已安全保存，可留空继续使用' : '粘贴一次用于测试和安全保存'} /></label>
             </div>
+            <p className="secret-hint">保存后配置文件只记录环境变量引用，不保存明文 API Key。当前引用：<code>{modelSetup.data?.api_key_ref || '尚未生成'}</code></p>
+            <div className="model-setup-actions"><button onClick={() => runSetup(false)} disabled={setupTesting}>仅测试</button><button className="primary-button" onClick={() => runSetup(true)} disabled={setupTesting}>{setupTesting ? '处理中...' : modelSetup.data?.key_status === 'configured' ? '更新 Key / 测试并保存' : '测试并保存'}</button></div>
+            <div className={`setup-console ${setupLog.includes('失败') || setupLog.includes('错误') ? 'fail' : ''}`}>{setupLog || modelSetup.data?.last_test?.message || '等待测试。'}</div>
           </section>
-        </>}
+        </div>}
 
-        {activeTab === 'keys' && <section className="panel settings-card">
-          <h2>🔑 API Key 管理</h2>
-          <p className="card-desc">输入 Key 后点击"测试"验证连通性并自动加载可用模型列表。</p>
-          <div className="key-grid">
-            {providers.map((provider: any) => {
-              const statusColor = provider.key_status === 'configured' ? '#027a48' : provider.key_status === 'missing' ? '#d92d20' : '#53637a'
-              const statusLabel = provider.key_status === 'configured' ? '已配置' : provider.key_status === 'missing' ? '未配置' : provider.key_status
-              const testState = testing[provider.name]
-              return <div className="key-card" key={provider.name}>
-                <div className="key-card-header">
-                  <strong>{provider.display_name}</strong>
-                  <span className="key-status" style={{color: statusColor}}>{statusLabel}</span>
-                </div>
-                <div className="key-input-row">
-                  <input type="password" placeholder="sk-..." value={apiKeys[provider.name] || ''} onChange={(e) => setKey(provider.name, e.target.value)} />
-                  <button className={`test-btn ${testState === 'ok' ? 'success' : testState === 'fail' ? 'fail' : ''}`} onClick={() => testConnection(provider.name)} disabled={testState === 'testing'}>
-                    {testState === 'testing' ? '...' : testState === 'ok' ? '✓' : testState === 'fail' ? '✗' : '测试'}
-                  </button>
-                </div>
-                <div className="key-card-footer">
-                  <small>{provider.env_name ? `ENV: ${provider.env_name}` : '直接配置'}</small>
-                  <small>{(liveModels[provider.name] || provider.models).length} 个模型</small>
-                </div>
-              </div>
-            })}
-          </div>
-        </section>}
+        {activeTab === 'advanced' && <div className="advanced-settings">
+          <details className="panel settings-card" open><summary>任务级模型路由</summary><p className="card-desc">通常不需要修改。只有当你想让不同任务使用不同模型时再调整这里。</p><div className="route-table">{routeKeys.map((name) => { const route = taskRoutes[name] || {}; const models = getModels(route.provider || ''); return <div className="route-row" key={name}><strong>{settings.data?.task_route_meta?.[name] || name}<small>{name}</small></strong><select value={route.provider || ''} onChange={(e) => updateRoute(name, { provider: e.target.value, model: '' })}><option value="">继承默认/未启用</option>{providersDraft.map((p: any) => <option key={p.name} value={p.name}>{p.display_name || p.name}</option>)}</select><input list={`models-${name}`} value={route.model || ''} onChange={(e) => updateRoute(name, { model: e.target.value })} placeholder="输入或选择模型名" /><datalist id={`models-${name}`}>{models.map((m: any) => <option key={m.name} value={m.name}>{m.display_name || m.name}</option>)}</datalist><input type="number" step="0.1" min="0" max="2" value={route.temperature ?? 0.1} onChange={(e) => updateRoute(name, { temperature: Number(e.target.value) })} title="temperature" /><input type="number" min="1" value={route.max_tokens ?? 4096} onChange={(e) => updateRoute(name, { max_tokens: Number(e.target.value) })} title="max_tokens" /></div>})}</div></details>
+          <details className="panel settings-card"><summary>服务商与自定义配置</summary><p className="card-desc">通常不需要修改。这里保留 base_url、headers、auth type 等兼容配置。</p><div className="provider-manager"><section className="provider-list"><h2>服务商</h2>{providersDraft.map((provider: any) => <button key={provider.name} className={activeProvider === provider.name ? 'active' : ''} onClick={() => setActiveProvider(provider.name)}><strong>{provider.display_name || provider.name}</strong><small>{provider.api_format} · {provider.models?.length || 0} models</small></button>)}</section><section className="provider-detail"><div className="template-row"><button onClick={() => applyProviderTemplate('openai')}>自定义 OpenAI-compatible</button><button onClick={() => applyProviderTemplate('anthropic')}>自定义 Anthropic-compatible</button></div><div className="model-select-row"><div className="model-select-item"><label>Name</label><input value={customProvider.name} onChange={(e) => setCustomProvider({...customProvider, name: e.target.value})} /></div><div className="model-select-item"><label>Display Name</label><input value={customProvider.display_name} onChange={(e) => setCustomProvider({...customProvider, display_name: e.target.value})} /></div><div className="model-select-item"><label>API Format</label><select value={customProvider.api_format} onChange={(e) => setCustomProvider({...customProvider, api_format: e.target.value})}><option value="openai">openai</option><option value="anthropic">anthropic</option><option value="native">native</option></select></div></div><div className="model-select-row"><div className="model-select-item"><label>Base URL</label><input value={customProvider.base_url} onChange={(e) => setCustomProvider({...customProvider, base_url: e.target.value})} placeholder="https://.../v1" /></div><div className="model-select-item"><label>API Key Ref</label><input value={customProvider.api_key_ref} onChange={(e) => setCustomProvider({...customProvider, api_key_ref: e.target.value})} placeholder="${CUSTOM_API_KEY}" /></div><div className="model-select-item"><label>初始模型</label><input value={customProvider.model} onChange={(e) => setCustomProvider({...customProvider, model: e.target.value})} placeholder="model-id" /></div></div><button className="primary-button" onClick={addCustomProvider}>加入服务商列表</button>{activeProviderData && <div className="provider-editor"><h3>{activeProviderData.display_name || activeProviderData.name}</h3><div className="model-select-row"><div className="model-select-item"><label>Base URL</label><input value={activeProviderData.base_url || ''} onChange={(e) => updateActiveProvider({base_url: e.target.value})} /></div><div className="model-select-item"><label>API Key Ref</label><input value={activeProviderData.api_key_ref || ''} onChange={(e) => updateActiveProvider({api_key_ref: e.target.value})} /></div><div className="model-select-item"><label>API Format</label><select value={activeProviderData.api_format || 'openai'} onChange={(e) => updateActiveProvider({api_format: e.target.value})}><option value="openai">openai</option><option value="anthropic">anthropic</option><option value="native">native</option></select></div></div><div className="model-select-row"><div className="model-select-item"><label>Auth Type</label><select value={activeProviderData.auth_type || 'bearer'} onChange={(e) => updateActiveProvider({auth_type: e.target.value})}><option value="bearer">bearer</option><option value="api-key-header">api-key-header</option><option value="none">none</option></select></div><div className="model-select-item"><label>API Key Header</label><input value={activeProviderData.api_key_header || 'Authorization'} onChange={(e) => updateActiveProvider({api_key_header: e.target.value})} /></div></div><div className="model-select-item full-width"><label>Default Headers JSON</label><textarea key={activeProviderData.name} defaultValue={JSON.stringify(activeProviderData.default_headers || {}, null, 2)} onBlur={(e) => { try { updateActiveProvider({default_headers: JSON.parse(e.target.value || '{}')}) } catch { alert('Default Headers 需要是合法 JSON') } }} /></div><div className="key-input-row"><input value={newModelName} onChange={(e) => setNewModelName(e.target.value)} placeholder="手动添加模型" /><button onClick={addModelToProvider}>添加模型</button><button onClick={() => testConnection(activeProviderData.name)}>测试/拉取模型</button></div><div className="model-chip-list">{(activeProviderData.models || []).map((model: any) => <span key={model.name}>{model.name}<label><input type="checkbox" checked={!!model.supports_vision} onChange={() => toggleModelVision(model.name)} /> vision</label></span>)}</div></div>}</section></div></details>
+        </div>}
 
         {activeTab === 'service' && <section className="panel settings-card">
           <h2>🖥 本地服务</h2>

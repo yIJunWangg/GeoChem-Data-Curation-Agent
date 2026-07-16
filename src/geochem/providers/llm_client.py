@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+import uuid
 from datetime import datetime
 from typing import Any
 
@@ -13,6 +14,7 @@ from ..core.database import Database
 from ..core.exceptions import LLMError, ProviderNotFoundError
 from ..core.logging_config import get_logger
 from ..core.models import LLMCallRecord, LLMResponse
+from ..core.secrets import resolve_secret
 from .anthropic_provider import AnthropicProvider
 from .google_provider import GoogleProvider
 from .ollama_provider import OllamaProvider
@@ -51,24 +53,25 @@ class LLMClient:
 
     def _init_providers_from_config(self) -> None:
         """Initialize providers from configuration."""
-        import os
-
         for prov_config in self.config.providers:
             if not prov_config.enabled:
                 continue
 
-            api_key = prov_config.api_key
-            if api_key and api_key.startswith("${") and api_key.endswith("}"):
-                env_var = api_key[2:-1]
-                api_key = os.environ.get(env_var)
+            api_key, _source, _env_name = resolve_secret(prov_config.api_key)
 
             base_url = prov_config.base_url
             provider_name = prov_config.name
 
             # Build kwargs for provider creation
+            default_headers = dict(prov_config.default_headers or {})
+            if prov_config.auth_type == "api-key-header" and api_key:
+                default_headers[prov_config.api_key_header or "Authorization"] = api_key
+                api_key = "not-used"
+            elif prov_config.auth_type == "none" and not api_key:
+                api_key = "not-used"
             create_kwargs: dict = {"api_key": api_key, "base_url": base_url}
-            if prov_config.default_headers:
-                create_kwargs["default_headers"] = prov_config.default_headers
+            if default_headers:
+                create_kwargs["default_headers"] = default_headers
 
             # Determine which class to use
             class_name = provider_name
@@ -78,9 +81,13 @@ class LLMClient:
                 class_name = provider_name
             elif prov_config.api_format == "openai" and provider_name not in ("openai", "ollama"):
                 class_name = "openai"  # Use OpenAI-compatible class
+            elif prov_config.api_format == "anthropic" and provider_name != "anthropic":
+                class_name = "anthropic"
 
-            if self.registry.is_registered(class_name) or class_name in self.registry._provider_classes:
+            if class_name in self.registry._provider_classes:
                 try:
+                    if provider_name not in self.registry._provider_classes:
+                        self.registry.register_class(provider_name, self.registry._provider_classes[class_name])
                     provider = self.registry.create_provider(provider_name, **create_kwargs)
                     # Set instance-level display name for error messages
                     provider.display_name = prov_config.display_name or provider_name
@@ -89,33 +96,46 @@ class LLMClient:
                     logger.warning(f"Failed to initialize provider {provider_name}: {e}")
 
     def _generate_call_id(self) -> str:
-        if self.db and self._call_counter == 0:
-            try:
-                row = self.db.fetch_one(
-                    "SELECT MAX(CAST(SUBSTR(call_id, 5) AS INTEGER)) as max_id "
-                    "FROM llm_calls WHERE call_id LIKE 'LLM_%'"
-                )
-                self._call_counter = row["max_id"] if row and row["max_id"] else 0
-            except Exception:
-                self._call_counter = 0
-        self._call_counter += 1
-        return f"LLM_{self._call_counter:06d}"
+        # New LLMClient instances can run concurrently in separate background
+        # tasks. A database MAX()+1 sequence races in that situation and caused
+        # cost records to be dropped on a UNIQUE constraint. Keep the familiar
+        # LLM_ prefix but make every identifier process-safe and time-sortable.
+        return f"LLM_{datetime.now().strftime('%Y%m%d%H%M%S%f')}_{uuid.uuid4().hex[:6]}"
 
     def _compute_prompt_hash(self, messages: list[dict[str, str]], model: str) -> str:
         content = json.dumps({"messages": messages, "model": model}, sort_keys=True)
         return hashlib.md5(content.encode()).hexdigest()[:12]
 
+    def _config_version(self) -> str:
+        """Stable, secret-free fingerprint of the active model routing."""
+        payload = {
+            "task_models": {
+                name: {"provider": task.provider, "model": task.model, "temperature": task.temperature, "max_tokens": task.max_tokens}
+                for name, task in sorted(self.config.task_models.items())
+            },
+            "providers": [
+                {"name": provider.name, "base_url": provider.base_url, "api_format": provider.api_format}
+                for provider in self.config.providers
+            ],
+        }
+        return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:12]
+
     def _get_task_config(self, task_name: str) -> TaskModelConfig:
         """Get model config for a task, falling back to default."""
         if task_name in self.config.task_models:
             return self.config.task_models[task_name]
+        # ``chat_agent`` is the new explicit route. Existing installations used
+        # ``chat_assistant``; keep that user-selected model until settings are
+        # saved again instead of silently changing providers.
+        if task_name == "chat_agent" and "chat_assistant" in self.config.task_models:
+            return self.config.task_models["chat_assistant"]
         if "_default" in self.config.task_models:
             return self.config.task_models["_default"]
         return TaskModelConfig(provider="anthropic", model="claude-sonnet-4-20250514")
 
     def chat(
         self,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         task_name: str = "_default",
         model_override: str | None = None,
         provider_override: str | None = None,
@@ -126,6 +146,7 @@ class LLMClient:
         agent_name: str = "",
         skill_name: str = "",
         use_cache: bool = True,
+        provider_kwargs: dict[str, Any] | None = None,
     ) -> LLMResponse:
         """Send a chat completion request with task routing and fallback.
 
@@ -180,6 +201,25 @@ class LLMClient:
                         model=mdl,
                         temperature=temperature,
                         max_tokens=max_tokens,
+                        **(provider_kwargs or {}),
+                    )
+                    final_content = response.final_content or response.content or ""
+                    response.final_content = final_content
+                    response.content = final_content
+                    # Adapters use generic implementation names (for example
+                    # "openai") internally. Persist the configured endpoint
+                    # name so the UI/cost report tells the user what was really
+                    # called, including OpenCode Go routes.
+                    response.provider = prov_name
+                    response.model = mdl
+                    # A raw SDK response may contain hidden reasoning fields.
+                    # It is not application data and must never be forwarded by
+                    # a later API response accidentally.
+                    response.raw_response = {}
+                    structured_status = (
+                        "reasoning_only" if response.reasoning_present and not final_content
+                        else "final_output" if final_content
+                        else "empty_output"
                     )
 
                     # Track the call
@@ -201,7 +241,11 @@ class LLMClient:
                         latency_ms=response.latency_ms,
                         status="success",
                         request_summary=f"Task: {task_name}, Messages: {len(messages)}",
-                        response_summary=response.content[:200] if response.content else "",
+                        response_summary=final_content[:200],
+                        reasoning_present=response.reasoning_present,
+                        finish_reason=response.finish_reason,
+                        config_version=self._config_version(),
+                        structured_status=structured_status,
                     )
                     self._record_call(call_record)
 
@@ -232,6 +276,8 @@ class LLMClient:
                         status="error",
                         error_message=str(e),
                         request_summary=f"Task: {task_name}, Messages: {len(messages)}",
+                        config_version=self._config_version(),
+                        structured_status="error",
                     )
                     self._record_call(call_record)
 
@@ -259,8 +305,9 @@ class LLMClient:
                  model_provider, model_name, prompt_version, prompt_hash,
                  input_tokens, output_tokens, cached_tokens, total_tokens,
                  estimated_cost, started_at, ended_at, latency_ms,
-                 status, error_message, retry_count, request_summary, response_summary)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                 status, error_message, retry_count, request_summary, response_summary,
+                 reasoning_present, finish_reason, config_version, structured_status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     record.call_id, record.project_id, record.article_id,
                     record.agent_name, record.skill_name,
@@ -272,6 +319,8 @@ class LLMClient:
                     record.ended_at.isoformat() if record.ended_at else None,
                     record.latency_ms, record.status, record.error_message,
                     record.retry_count, record.request_summary, record.response_summary,
+                    int(record.reasoning_present), record.finish_reason,
+                    record.config_version, record.structured_status,
                 ),
             )
             self.db.commit()
