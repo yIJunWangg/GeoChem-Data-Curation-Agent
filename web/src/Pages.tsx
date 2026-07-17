@@ -1,12 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Document, Page, pdfjs } from 'react-pdf'
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import {
-  ArrowRight, BarChart3, BookOpen, CheckCircle2, Database, Download, ExternalLink,
-  FileInput, FileSpreadsheet, KeyRound, Link2, Plus, Search, Settings as SettingsIcon,
-  ShieldAlert, Upload, WandSparkles,
+  Activity, ArrowRight, BarChart3, BookOpen, Bot, CheckCircle2, Clock3, Database,
+  Download, ExternalLink, FileInput, FileSpreadsheet, FileText, KeyRound, Link2,
+  Plus, Search, Settings as SettingsIcon, ShieldAlert, Upload, WandSparkles, Workflow,
 } from 'lucide-react'
 import { api, watchTask } from './api'
 import { useAppStore } from './store'
@@ -23,30 +23,164 @@ function SimpleTable({ rows, columns }: { rows: Record<string, any>[]; columns: 
 }
 
 export function DashboardPage() {
-  const { projectId } = useAppStore()
+  const { projectId, articleId, setArticleId } = useAppStore()
+  const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const queryClient = useQueryClient()
+  const importRef = useRef<HTMLElement>(null)
   const metrics = useQuery({ queryKey: ['dashboard', projectId], queryFn: () => api.dashboard(projectId), enabled: Boolean(projectId) })
   const articles = useQuery({ queryKey: ['articles', projectId], queryFn: () => api.articles(projectId), enabled: Boolean(projectId) })
+  const headers = useQuery({ queryKey: ['headers', projectId], queryFn: () => api.headers(projectId), enabled: Boolean(projectId) })
+  const standardized = useQuery({ queryKey: ['standardized', projectId, 'dashboard'], queryFn: () => api.standardized(projectId), enabled: Boolean(projectId) })
+  const threads = useQuery({ queryKey: ['chat-threads', projectId, 'dashboard'], queryFn: () => api.chatThreads(projectId), enabled: Boolean(projectId) })
+  const [source, setSource] = useState('')
+  const [pending, setPending] = useState<Record<string, string> | null>(null)
+  const [importedResource, setImportedResource] = useState<{article_id:string;resource_id:string;file_name:string;ready:boolean} | null>(null)
+  const [importHeaderId, setImportHeaderId] = useState('')
+  const [status, setStatus] = useState('等待导入文献。')
   const cards = [
-    ['文献', metrics.data?.articles || 0, BookOpen, '#1468d8'], ['表头配置', metrics.data?.headers || 0, FileSpreadsheet, '#7c3aed'],
-    ['相关资源', metrics.data?.elements || 0, WandSparkles, '#00875a'], ['待审核', metrics.data?.reviews || 0, ShieldAlert, '#c2410c'],
-    ['标准记录', metrics.data?.records || 0, Database, '#0f766e'], ['学习规则', metrics.data?.rules || 0, CheckCircle2, '#53637a'],
+    ['文献', metrics.data?.articles || 0, BookOpen, '#1468d8'],
+    ['相关资源', metrics.data?.elements || 0, WandSparkles, '#00875a'],
+    ['标准记录', metrics.data?.records || 0, Database, '#0f766e'],
+    ['待审核', metrics.data?.reviews || 0, ShieldAlert, '#c2410c'],
+    ['学习规则', metrics.data?.rules || 0, CheckCircle2, '#7c3aed'],
   ] as const
-  return <div className="page"><PageHeader title="项目总览" subtitle="一个工作区内管理多篇文章、多套表头和可追溯的标准化数据。" />
-    <div className="metric-grid">{cards.map(([label, value, Icon, color]) => <section className="metric-tile" key={label}><Icon color={color} size={20} /><span>{label}</span><strong>{value}</strong></section>)}</div>
-    <section className="panel dashboard-section"><div className="panel-heading"><strong>最近文献</strong><span>{articles.data?.length || 0}</span></div><SimpleTable rows={articles.data || []} columns={[{key:'title',label:'文章'},{key:'doi',label:'DOI'},{key:'resource_count',label:'资源'},{key:'element_count',label:'相关证据'},{key:'status',label:'状态'}]} /></section>
+
+  useEffect(() => {
+    if (searchParams.get('panel') !== 'import') return
+    window.setTimeout(() => importRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 80)
+  }, [searchParams])
+
+  const openSource = async () => {
+    if (!source.trim()) return
+    try {
+      setStatus('正在解析 DOI / URL，并打开公开来源页面...')
+      const result = await api.openSource(projectId, source.trim())
+      setPending(result)
+      if (result.article_id) {
+        setArticleId(result.article_id)
+        setImportedResource({ article_id: result.article_id, resource_id: result.resource_id || '', file_name: result.title || result.doi || source.trim(), ready: false })
+        setImportHeaderId('')
+      }
+      setStatus('浏览器已打开。确认正文或 PDF 可访问后继续。')
+    } catch (error) { setStatus(error instanceof Error ? error.message : '来源解析失败，请改用本地 PDF。') }
+  }
+  const confirmSource = async () => {
+    if (!pending?.article_id) return
+    try {
+      const { task_id } = await api.confirmAccess(projectId, pending.article_id, pending.url || source)
+      setStatus('正在读取正文并发现表格、图像和相关段落...')
+      watchTask(projectId, task_id, (event) => setStatus(event.message), () => {
+        setStatus('文献读取完成。')
+        setImportedResource((current) => current ? { ...current, ready: true } : current)
+        queryClient.invalidateQueries({ queryKey: ['articles', projectId] })
+        queryClient.invalidateQueries({ queryKey: ['dashboard', projectId] })
+      })
+    } catch (error) { setStatus(error instanceof Error ? error.message : '读取失败，请上传本地 PDF。') }
+  }
+  const importFile = async (file?: File) => {
+    if (!file) return
+    try {
+      setStatus(`正在导入 ${file.name}...`)
+      if (file.name.toLowerCase().endsWith('.pdf')) {
+        const result = await api.importArticleFile(projectId, file)
+        setArticleId(result.article_id)
+        setPending(null)
+        setImportedResource({ article_id: result.article_id, resource_id: result.resource_id, file_name: result.file_name || file.name, ready: true })
+        setImportHeaderId('')
+      } else if (articleId) {
+        await api.uploadResource(projectId, articleId, file)
+      } else {
+        setStatus('请先从最近文献中选择文章，再添加 Excel / CSV 附件。')
+        return
+      }
+      setStatus(`${file.name} 已保存到文章目录。`)
+      await queryClient.invalidateQueries({ queryKey: ['articles', projectId] })
+      await queryClient.invalidateQueries({ queryKey: ['dashboard', projectId] })
+    } catch (error) { setStatus(error instanceof Error ? error.message : '文件导入失败。') }
+  }
+  const recentThreads = (threads.data || []).slice(0, 5)
+  const quickResourceArticleId = importedResource?.article_id || articleId
+  const importedArticle = articles.data?.find((article) => article.article_id === quickResourceArticleId)
+  const quickResource = importedResource || (importedArticle ? {
+    article_id: importedArticle.article_id,
+    resource_id: '',
+    file_name: importedArticle.title || importedArticle.article_id,
+    ready: true,
+  } : null)
+  useEffect(() => setImportHeaderId(''), [quickResourceArticleId])
+  const selectedImportHeader = importHeaderId || importedArticle?.header_config_id || ''
+  const assignImportedHeader = async (configId: string) => {
+    if (!quickResource?.article_id) return
+    try {
+      setImportHeaderId(configId)
+      await api.assignHeader(projectId, quickResource.article_id, configId)
+      await queryClient.invalidateQueries({ queryKey: ['articles', projectId] })
+      await queryClient.invalidateQueries({ queryKey: ['dashboard', projectId] })
+      const configName = headers.data?.find((item) => item.config_id === configId)?.name
+      setStatus(configName ? `已为当前文献分配表头：${configName}` : '已取消当前文献的表头分配。')
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : '表头分配失败。')
+    }
+  }
+  const standardizedByArticle = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const record of standardized.data || []) {
+      const recordArticleId = String((record as Record<string, unknown>).article_id || '')
+      if (recordArticleId) counts.set(recordArticleId, (counts.get(recordArticleId) || 0) + 1)
+    }
+    return counts
+  }, [standardized.data])
+
+  return <div className="page dashboard-page"><PageHeader title="项目概览" subtitle="管理文献与数据资产，跟踪抽取任务进度和标准化状态。" />
+    <div className="metric-grid dashboard-metrics">{cards.map(([label, value, Icon, color]) => <section className="metric-tile" key={label}><Icon color={color} size={19} /><span>{label}</span><strong>{value}</strong></section>)}</div>
+    <div className="dashboard-grid">
+      <section className="panel dashboard-literature"><div className="panel-heading"><strong>最近文献</strong><span>{articles.data?.length || 0}</span></div>
+        <div className="dashboard-article-table"><table><thead><tr><th>文献标题</th><th>DOI / 来源</th><th>表头</th><th>证据</th><th>审核状态</th><th aria-label="操作"/></tr></thead><tbody>{(articles.data || []).slice(0, 8).map((article) => {
+          const config = headers.data?.find((item) => item.config_id === article.header_config_id)
+          const standardizedCount = standardizedByArticle.get(article.article_id) || 0
+          const reviewComplete = standardizedCount > 0 || ['completed', 'standardized', 'reviewed'].includes(article.status || '')
+          return <tr key={article.article_id} className={article.article_id === articleId ? 'active' : ''} onClick={() => setArticleId(article.article_id)}><td><strong>{article.title || article.article_id}</strong><small>{article.journal || article.url || article.article_id}</small></td><td>{article.doi || '未登记 DOI'}</td><td>{config?.name || <span className="status-text warning">未分配</span>}</td><td>{article.element_count || 0}</td><td><span className={`article-status ${reviewComplete ? 'reviewed' : 'pending'}`} title={reviewComplete ? `${standardizedCount} 条标准化记录` : '尚未生成标准化记录'}>{reviewComplete ? '完成审核' : '待审核'}</span></td><td><div className="row-actions"><button title="进入抽取工作台" onClick={(event) => { event.stopPropagation(); setArticleId(article.article_id); navigate('/workbench') }}><Workflow size={14}/></button><button title="在对话助手中打开" onClick={(event) => { event.stopPropagation(); setArticleId(article.article_id); navigate('/chat') }}><Bot size={14}/></button></div></td></tr>
+        })}</tbody></table>{!articles.data?.length && <div className="empty-state compact">还没有文献，可从右侧快速导入。</div>}</div>
+      </section>
+      <section ref={importRef} className={`panel dashboard-import ${quickResource ? 'has-resource' : ''}`}><div className="panel-heading"><strong>快速导入文献</strong><FileInput size={17}/></div>
+        <div className="import-tabs"><span className="active">DOI / URL</span><span>本地文件</span></div>
+        <div className="quick-import-form"><div className="doi-input compact"><Link2 size={16}/><input value={source} onChange={(event) => setSource(event.target.value)} placeholder="输入 DOI、URL 或期刊主页链接"/></div><button className="primary-button" onClick={openSource}>导入并解析</button></div>
+        {quickResource && <article className="quick-import-resource-card">
+          <div className="quick-resource-summary"><FileText size={18}/><span><strong>{importedArticle?.title || quickResource.file_name}</strong><small>{quickResource.ready ? 'PDF / 文献资源已导入' : '等待确认公开正文或 PDF'} · {quickResource.article_id}</small></span>{quickResource.ready && <CheckCircle2 size={16}/>}</div>
+          <div className="quick-resource-controls"><label><span>目标表头</span><select value={selectedImportHeader} onChange={(event) => assignImportedHeader(event.target.value)}><option value="">未分配</option>{headers.data?.map((config) => <option key={config.config_id} value={config.config_id}>{config.name} · {config.field_count} 字段</option>)}</select></label>{pending && !quickResource.ready ? <button onClick={confirmSource}>确认可访问</button> : <button onClick={() => { setArticleId(quickResource.article_id); navigate('/workbench') }}>进入工作台 <ArrowRight size={14}/></button>}</div>
+        </article>}
+        <label className="dashboard-drop-zone"><Upload size={22}/><strong>拖放 PDF / Excel / CSV 到此处</strong><span>PDF 建立新文章；数据附件加入当前文献</span><input type="file" accept=".pdf,.xlsx,.xls,.csv" onChange={(event) => { importFile(event.target.files?.[0]); event.target.value = '' }}/></label>
+        <p className="quick-import-status">{status}</p>
+      </section>
+      <section className="panel dashboard-tasks"><div className="panel-heading"><strong>最近处理任务</strong><span>{recentThreads.length}</span></div><div className="recent-task-list">{recentThreads.map((thread) => <button key={thread.thread_id} onClick={() => navigate('/chat')}><Bot size={15}/><span><strong>{thread.title}</strong><small>{thread.active_run_status || '对话已保存'}</small></span><time>{thread.updated_at ? new Date(thread.updated_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}</time></button>)}{!recentThreads.length && <div className="empty-state compact">暂无最近任务。</div>}</div></section>
+      <section className="panel dashboard-activity"><div className="panel-heading"><strong>活动与状态</strong><Activity size={17}/></div><div className="activity-list"><div><CheckCircle2 size={16}/><span><strong>本地服务正常</strong><small>API 与项目数据库可用</small></span></div><div><BookOpen size={16}/><span><strong>{metrics.data?.articles || 0} 篇文献</strong><small>{metrics.data?.elements || 0} 个相关资源</small></span></div><div><Clock3 size={16}/><span><strong>{metrics.data?.reviews || 0} 项待审核</strong><small>确认后可生成标准化记录</small></span></div></div></section>
+    </div>
   </div>
 }
 
 export function HeaderPage() {
-  const { projectId } = useAppStore()
+  const { projectId, articleId } = useAppStore()
   const queryClient = useQueryClient()
   const configs = useQuery({ queryKey: ['headers', projectId], queryFn: () => api.headers(projectId), enabled: Boolean(projectId) })
+  const articles = useQuery({ queryKey: ['articles', projectId], queryFn: () => api.articles(projectId), enabled: Boolean(projectId) })
   const [activeId, setActiveId] = useState('')
+  const [activeFieldIndex, setActiveFieldIndex] = useState(0)
   const active = configs.data?.find((item) => item.config_id === activeId) || configs.data?.[0]
-  const rows = active?.headers.map((field, index) => ({ index: index + 1, ...field })) || []
-  return <div className="page"><PageHeader title="表头配置" subtitle="保存多套可复用表头，字段名称、顺序和单位将直接决定最终输出。" action={<label className="primary-button file-button"><Upload size={16}/> 导入 CSV / XLSX<input type="file" accept=".csv,.xlsx,.xls" onChange={async (event) => { const file=event.target.files?.[0]; if(file){ await api.importHeaders(projectId,file); queryClient.invalidateQueries({queryKey:['headers',projectId]}); event.target.value='' } }}/></label>} />
-    <div className="header-layout"><aside className="panel config-list"><div className="panel-heading"><strong>已保存配置</strong><span>{configs.data?.length || 0}</span></div>{configs.data?.map((config) => <button className={active?.config_id === config.config_id ? 'active' : ''} key={config.config_id} onClick={() => setActiveId(config.config_id)}><FileSpreadsheet size={17}/><span><strong>{config.name}</strong><small>{config.field_count} 个字段</small></span></button>)}</aside>
-      <section className="panel header-editor"><div className="panel-heading"><strong>{active?.name || '未选择配置'}</strong><span>{rows.length} 列</span></div><SimpleTable rows={rows} columns={[{key:'index',label:'#'},{key:'字段名',label:'显示表头'},{key:'canonical_field',label:'标准字段'},{key:'默认单位',label:'目标单位'},{key:'description',label:'字段说明'}]} /></section></div>
+  const rows = active?.headers.map((field, index) => ({
+    index: index + 1,
+    display_header: field.display_header || field['字段名'] || field['表头'] || '',
+    canonical_field: field.canonical_field || field['标准字段'] || '',
+    target_unit: field.target_unit || field['默认单位'] || field['单位'] || '',
+    description: field.description || field['description'] || field['字段说明'] || '',
+    ...field,
+  })) || []
+  const selectedField = rows[Math.min(activeFieldIndex, Math.max(0, rows.length - 1))]
+  return <div className="page header-page"><PageHeader title="表头管理" subtitle="维护可复用的目标表头、字段说明和输出单位，并分配给文章。" action={<label className="primary-button file-button"><Upload size={16}/> 导入 CSV / XLSX<input type="file" accept=".csv,.xlsx,.xls" onChange={async (event) => { const file=event.target.files?.[0]; if(file){ await api.importHeaders(projectId,file); queryClient.invalidateQueries({queryKey:['headers',projectId]}); event.target.value='' } }}/></label>} />
+    <div className="header-management-layout"><aside className="panel config-list"><div className="panel-heading"><strong>已保存表头</strong><span>{configs.data?.length || 0}</span></div>{configs.data?.map((config) => <button className={active?.config_id === config.config_id ? 'active' : ''} key={config.config_id} onClick={() => { setActiveId(config.config_id); setActiveFieldIndex(0) }}><FileSpreadsheet size={17}/><span><strong>{config.name}</strong><small>{config.field_count} 个字段</small></span></button>)}</aside>
+      <section className="panel header-editor"><div className="panel-heading"><strong>{active?.name || '未选择配置'}</strong><span>{rows.length} 列</span></div><div className="simple-table-wrap selectable-header-table"><table className="simple-table"><thead><tr><th>#</th><th>显示表头</th><th>标准字段</th><th>目标单位</th><th>字段说明</th></tr></thead><tbody>{rows.map((row, index) => <tr key={`${row.display_header}-${index}`} className={index === activeFieldIndex ? 'active' : ''} onClick={() => setActiveFieldIndex(index)}><td>{index + 1}</td><td>{row.display_header || '—'}</td><td>{row.canonical_field || '—'}</td><td>{row.target_unit || '—'}</td><td>{row.description || '—'}</td></tr>)}</tbody></table></div></section>
+      <aside className="panel header-field-inspector"><div className="panel-heading"><strong>字段详情</strong></div>{selectedField ? <div className="header-field-detail"><label>显示表头<input value={selectedField.display_header || ''} readOnly/></label><label>标准字段<input value={selectedField.canonical_field || ''} readOnly/></label><label>目标单位<input value={selectedField.target_unit || ''} readOnly/></label><label>字段说明<textarea value={selectedField.description || ''} readOnly rows={6}/></label><small>字段名称、单位和说明来自当前保存配置。重新导入配置可批量更新。</small></div> : <div className="empty-state compact">选择中间字段查看详情。</div>}<div className="header-assignment"><strong>分配给文章</strong><select value={(articles.data || []).find((article) => article.article_id === articleId)?.header_config_id || ''} disabled={!articleId || !active} onChange={async (event) => { if (!articleId) return; await api.assignHeader(projectId, articleId, event.target.value); queryClient.invalidateQueries({ queryKey: ['articles', projectId] }) }}><option value="">未分配</option>{configs.data?.map((config) => <option key={config.config_id} value={config.config_id}>{config.name}</option>)}</select><small>{articleId ? '应用到当前文献。' : '请先在顶部选择当前文献。'}</small></div></aside>
+    </div>
   </div>
 }
 
@@ -280,11 +414,10 @@ export function StandardizedPage() {
   const [filterArticle, setFilterArticle] = useState('')
   const [exportDir, setExportDir] = useState('')
   const [exportMessage, setExportMessage] = useState('')
-  const aid = filterArticle || articleId
-  const data = useQuery({ queryKey: ['standardized', projectId, aid], queryFn: () => api.standardized(projectId), enabled: Boolean(projectId) })
+  const exportArticleId = filterArticle || articleId
+  const data = useQuery({ queryKey: ['standardized', projectId], queryFn: () => api.standardized(projectId), enabled: Boolean(projectId) })
   const exportDirectory = useQuery({ queryKey: ['export-directory', projectId], queryFn: () => api.exportDirectory(projectId), enabled: Boolean(projectId) })
-  const rows = (data.data || []).filter((r: Record<string,unknown>) => !aid || r.article_id === aid)
-  const SKIP_KEYS = new Set(['quality_grade', 'record_id', 'article_id', 'table_id', 'row_id', 'processed_at', 'data', 'original_fields', 'original_values', 'mapped_fields', 'confidence_scores', 'review_statuses', 'source_file', 'source_table', 'source_row', 'reference', 'doi', 'mapping_rule_ids', 'calculation_ids', 'mapped_units', 'original_units'])
+  const rows = (data.data || []).filter((r: Record<string,unknown>) => !filterArticle || r.article_id === filterArticle)
   const fields = useMemo(() => {
     const seen = new Set<string>()
     const result: string[] = []
@@ -320,8 +453,8 @@ export function StandardizedPage() {
   }
 
   const doExport = async (format: string) => {
-    if (!aid) return
-    const result = await api.exportArticle(projectId, aid, format, exportDir)
+    if (!exportArticleId) return
+    const result = await api.exportArticle(projectId, exportArticleId, format, exportDir)
     setExportMessage(`已导出 ${result.records} 条记录到 ${result.path}`)
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['standardized', projectId] }),
@@ -330,24 +463,24 @@ export function StandardizedPage() {
     ])
   }
 
-  return <div className="page"><PageHeader title="标准化导出" subtitle="仅展示满足审核和质量要求的记录，导出时保留完整用户表头。"
-    action={<div style={{display:'flex',gap:8}}>
+  return <div className="page standardized-page"><PageHeader title="标准化导出" subtitle="查看已完成审核的记录，并按用户表头导出当前文献。"
+    action={<div className="standardized-export-actions">
       <select value={filterArticle} onChange={(e) => setFilterArticle(e.target.value)}><option value="">全部文章</option>{(articles.data||[]).map((a) => <option key={a.article_id} value={a.article_id}>{a.title || a.article_id}</option>)}</select>
-      <button className="primary-button" onClick={() => doExport('csv')}><Download size={16}/> CSV</button>
-      <button className="primary-button" onClick={() => doExport('xlsx')}><Download size={16}/> XLSX</button>
+      <button className="primary-button" title="导出顶部当前文献或筛选文献" disabled={!exportArticleId} onClick={() => doExport('csv')}><Download size={16}/> CSV</button>
+      <button className="primary-button" title="导出顶部当前文献或筛选文献" disabled={!exportArticleId} onClick={() => doExport('xlsx')}><Download size={16}/> XLSX</button>
     </div>} />
-    <section className="panel export-directory-card">
-      <div className="panel-heading"><strong>导出目录</strong><span>{exportDirectory.data?.is_default ? '默认' : '自定义'}</span></div>
-      <div className="export-directory-row">
-        <input value={exportDir} onChange={(event) => setExportDir(event.target.value)} placeholder="默认使用当前工作区 output 目录" />
-        <button onClick={saveExportDir}>保存目录</button>
-        <button onClick={resetExportDir}>恢复默认</button>
-        <button onClick={openExportDir}>打开目录</button>
-      </div>
-      <p className="card-desc">导出只会在此目录生成一个标准化 CSV 或 XLSX 文件；溯源、审核和计算记录保存在项目数据库中，不额外创建复杂文件夹。</p>
-      {exportMessage && <p className="form-success">{exportMessage}</p>}
+    <section className="panel standardized-data-panel">
+      <div className="panel-heading standardized-table-heading"><div><strong>已完成审核的记录</strong><small>{filterArticle ? '当前筛选文献' : '全部文章'}</small></div><span>{rows.length}</span></div>
+      {rows.length ? <SimpleTable rows={flattened} columns={fields.map((field) => ({key:field,label:field}))} /> : <div className="standardized-empty"><Database size={30}/><strong>当前范围暂无标准化记录</strong><span>请切换文章，或先到“人工审核”生成标准化记录。</span></div>}
     </section>
-    <section className="panel"><SimpleTable rows={flattened} columns={fields.map((field) => ({key:field,label:field}))} /></section>
+    <section className="panel export-directory-card compact-export-directory">
+      <div className="export-directory-label"><strong>导出目录</strong><small>{exportDirectory.data?.is_default ? '工作区默认目录' : '自定义目录'}</small></div>
+      <input value={exportDir} onChange={(event) => setExportDir(event.target.value)} placeholder="默认使用当前工作区 output 目录" />
+      <button onClick={saveExportDir}>保存</button>
+      <button onClick={resetExportDir}>恢复默认</button>
+      <button onClick={openExportDir}>打开目录</button>
+      {exportMessage && <span className="export-inline-message">{exportMessage}</span>}
+    </section>
   </div>
 }
 
@@ -392,13 +525,16 @@ export function CostPage() {
 }
 
 export function SettingsPage() {
+  const { projectId } = useAppStore()
+  const [searchParams] = useSearchParams()
   const queryClient = useQueryClient()
   const settings = useQuery({ queryKey: ['settings'], queryFn: api.settings })
   const modelSetup = useQuery({ queryKey: ['model-setup'], queryFn: api.modelSetup })
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({})
   const [liveModels, setLiveModels] = useState<Record<string, {name:string;display_name:string;supports_vision:boolean}[]>>({})
   const [, setTesting] = useState<Record<string, string>>({})
-  const [activeTab, setActiveTab] = useState('model')
+  const [activeTab, setActiveTab] = useState(() => searchParams.get('tab') === 'usage' ? 'usage' : 'model')
+  const costs = useQuery({ queryKey: ['costs', projectId], queryFn: () => api.costs(projectId), enabled: Boolean(projectId && activeTab === 'usage') })
   const [setupTesting, setSetupTesting] = useState(false)
   const [setupLog, setSetupLog] = useState('')
   const [setupForm, setSetupForm] = useState({ provider_preset: 'opencode-go', model_id: '', api_key: '', base_url: '' })
@@ -435,6 +571,11 @@ export function SettingsPage() {
       base_url: '',
     }))
   }, [modelSetup.data])
+
+  useEffect(() => {
+    const requested = searchParams.get('tab')
+    if (requested && ['model', 'usage', 'advanced', 'service'].includes(requested)) setActiveTab(requested)
+  }, [searchParams])
 
   const getModels = (providerName: string) => {
     if (liveModels[providerName]) return liveModels[providerName]
@@ -577,6 +718,7 @@ export function SettingsPage() {
 
   const TABS = [
     { key: 'model', label: '模型配置', icon: '🧠' },
+    { key: 'usage', label: '用量与成本', icon: '📊' },
     { key: 'advanced', label: '高级设置', icon: '🧩' },
     { key: 'service', label: '本地服务', icon: '🖥' },
   ]
@@ -635,6 +777,11 @@ export function SettingsPage() {
             <div className="model-setup-actions"><button onClick={() => runSetup(false)} disabled={setupTesting}>仅测试</button><button className="primary-button" onClick={() => runSetup(true)} disabled={setupTesting}>{setupTesting ? '处理中...' : modelSetup.data?.key_status === 'configured' ? '更新 Key / 测试并保存' : '测试并保存'}</button></div>
             <div className={`setup-console ${setupLog.includes('失败') || setupLog.includes('错误') ? 'fail' : ''}`}>{setupLog || modelSetup.data?.last_test?.message || '等待测试。'}</div>
           </section>
+        </div>}
+
+        {activeTab === 'usage' && <div className="usage-settings-page">
+          <div className="metric-grid compact usage-metrics"><section className="metric-tile"><BarChart3 size={20}/><span>总 Token</span><strong>{(costs.data || []).reduce((sum, row) => sum + Number(row.total_tokens || 0), 0).toLocaleString()}</strong></section><section className="metric-tile"><Database size={20}/><span>调用次数</span><strong>{(costs.data || []).reduce((sum, row) => sum + Number(row.calls || 0), 0)}</strong></section><section className="metric-tile"><ShieldAlert size={20}/><span>失败调用</span><strong>{(costs.data || []).reduce((sum, row) => sum + Number(row.errors || 0), 0)}</strong></section></div>
+          <section className="panel usage-table"><div className="panel-heading"><strong>模型调用明细</strong><span>{costs.data?.length || 0}</span></div><SimpleTable rows={costs.data || []} columns={[{key:'model_provider',label:'Provider'},{key:'model_name',label:'模型'},{key:'agent_name',label:'Agent'},{key:'skill_name',label:'任务'},{key:'calls',label:'Calls'},{key:'input_tokens',label:'输入'},{key:'output_tokens',label:'输出'},{key:'total_tokens',label:'总量'},{key:'estimated_cost',label:'成本'}]} /></section>
         </div>}
 
         {activeTab === 'advanced' && <div className="advanced-settings">

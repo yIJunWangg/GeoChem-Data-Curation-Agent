@@ -1,35 +1,38 @@
-import { useEffect } from 'react'
-import { NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
-  BarChart3, BookOpen, Bot, Database, FileInput, FileSpreadsheet, Gauge,
-  Columns3, GitBranch, MemoryStick, MessageSquare, Settings, ShieldCheck,
+  BookOpen, Bot, ChevronLeft, ChevronRight, Columns3, Database, FileSpreadsheet,
+  Gauge, Settings, ShieldCheck, SquarePlus, Workflow,
 } from 'lucide-react'
 import { api } from './api'
 import { useAppStore } from './store'
 import WorkbenchPage from './WorkbenchPage'
-import { CostPage, DashboardPage, HeaderPage, ImportPage, RulesPage, SettingsPage, StandardizedPage } from './Pages'
+import { DashboardPage, HeaderPage, SettingsPage, StandardizedPage } from './Pages'
 import { ReviewPage } from './ReviewPage'
-import { TracePage } from './TracePage'
 import { ChatPage } from './ChatPage'
 
 const NAV = [
-  ['/', '项目总览', Gauge],
-  ['/headers', '表头配置', Columns3],
-  ['/import', '文献导入', FileInput],
-  ['/workbench', '智能体工作台', Bot],
-  ['/chat', '对话助手', MessageSquare],
+  ['/', '项目概览', Gauge],
+  ['/headers', '表头管理', Columns3],
+  ['/workbench', '抽取工作台', Workflow],
+  ['/chat', '对话助手', Bot],
   ['/review', '人工审核', ShieldCheck],
-  ['/rules', '规则记忆', MemoryStick],
   ['/standardized', '标准化导出', FileSpreadsheet],
-  ['/trace', '溯源查看', GitBranch],
-  ['/cost', 'Token统计', BarChart3],
   ['/settings', '设置', Settings],
 ] as const
+
+function LegacyRedirect({ pathname, defaults = {} }: { pathname: string; defaults?: Record<string, string> }) {
+  const location = useLocation()
+  const params = new URLSearchParams(location.search)
+  Object.entries(defaults).forEach(([key, value]) => { if (!params.has(key)) params.set(key, value) })
+  return <Navigate to={`${pathname}?${params.toString()}`} replace />
+}
 
 export default function App() {
   const { projectId, setProjectId } = useAppStore()
   const navigate = useNavigate()
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.localStorage.getItem('geochem.sidebar.collapsed') === 'true')
   const workspace = useQuery({ queryKey: ['workspace'], queryFn: api.workspace })
   const articles = useQuery({ queryKey: ['articles', projectId], queryFn: () => api.articles(projectId), enabled: Boolean(projectId) })
   const { articleId, setArticleId } = useAppStore()
@@ -38,15 +41,16 @@ export default function App() {
   useEffect(() => {
     if (!articleId && articles.data?.length) setArticleId(articles.data[0].article_id)
   }, [articleId, articles.data, setArticleId])
+  useEffect(() => { window.localStorage.setItem('geochem.sidebar.collapsed', String(sidebarCollapsed)) }, [sidebarCollapsed])
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand"><Database size={24} /><strong>GeoChem</strong></div>
+    <div className={`app-shell ${sidebarCollapsed ? 'sidebar-is-collapsed' : ''}`}>
+      <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
+        <div className="brand"><Database size={24} /><strong>GeoChem</strong><button className="sidebar-toggle icon-button" title={sidebarCollapsed ? '展开导航' : '收起导航'} onClick={() => setSidebarCollapsed((value) => !value)}>{sidebarCollapsed ? <ChevronRight size={16}/> : <ChevronLeft size={16}/>}</button></div>
         <p className="brand-sub">Data Curation Agent<br />地球化学文献数据整理与标准化</p>
         <nav className="nav-list">
           {NAV.map(([path, label, Icon]) => (
-            <NavLink key={path} to={path} end={path === '/'} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
+            <NavLink key={path} to={path} title={label} end={path === '/'} className={({ isActive }) => isActive ? 'nav-item active' : 'nav-item'}>
               <Icon size={18} /><span>{label}</span>
             </NavLink>
           ))}
@@ -63,21 +67,21 @@ export default function App() {
               {!articles.data?.length && <option value="">暂无文献</option>}
               {articles.data?.map((article) => <option key={article.article_id} value={article.article_id}>{article.title || article.doi || article.article_id}</option>)}
             </select>
-            <button className="primary-button" onClick={() => navigate('/import')}><Bot size={17} /> 新建任务</button>
+            <button className="primary-button" onClick={() => navigate('/?panel=import')}><SquarePlus size={17} /> 新建任务</button>
           </div>
         </header>
         <main className="page-viewport">
           <Routes>
             <Route path="/" element={<DashboardPage />} />
             <Route path="/headers" element={<HeaderPage />} />
-            <Route path="/import" element={<ImportPage />} />
+            <Route path="/import" element={<LegacyRedirect pathname="/" defaults={{ panel: 'import' }} />} />
             <Route path="/workbench" element={<WorkbenchPage />} />
             <Route path="/chat" element={<ChatPage />} />
             <Route path="/review" element={<ReviewPage />} />
-            <Route path="/rules" element={<RulesPage />} />
+            <Route path="/rules" element={<LegacyRedirect pathname="/workbench" defaults={{ view: 'rules' }} />} />
             <Route path="/standardized" element={<StandardizedPage />} />
-            <Route path="/trace" element={<TracePage />} />
-            <Route path="/cost" element={<CostPage />} />
+            <Route path="/trace" element={<LegacyRedirect pathname="/review" defaults={{ mode: 'standardized' }} />} />
+            <Route path="/cost" element={<LegacyRedirect pathname="/settings" defaults={{ tab: 'usage' }} />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

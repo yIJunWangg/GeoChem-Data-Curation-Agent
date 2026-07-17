@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useSearchParams } from 'react-router-dom'
 import { AgGridReact } from 'ag-grid-react'
 import type { CellClickedEvent, ColDef, SelectionChangedEvent } from 'ag-grid-community'
 import {
@@ -8,6 +9,8 @@ import {
 } from 'lucide-react'
 import { api } from './api'
 import { PdfEvidenceViewer, type PdfEvidence } from './PdfEvidenceViewer'
+import { ResizableSplit } from './ResizableSplit'
+import { StandardizedTraceView } from './TracePage'
 import { useAppStore } from './store'
 import type { CandidateCell, CandidateRecord, DocumentElement, EvidenceSource } from './types'
 
@@ -70,6 +73,8 @@ function recordSources(record: CandidateRecord, elements: Map<string, DocumentEl
 
 export function ReviewPage() {
   const { projectId, articleId } = useAppStore()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const reviewMode = searchParams.get('mode') === 'standardized' ? 'standardized' : 'candidate'
   const queryClient = useQueryClient()
   const recordsQuery = useQuery({
     queryKey: ['candidate-records', projectId, articleId],
@@ -136,6 +141,13 @@ export function ReviewPage() {
         return true
       },
       tooltipValueGetter: ({ data }) => data?.data?.[header.display_header] || '空',
+      cellRenderer: ({ data }: { data?: CandidateRecord }) => {
+        const value = data?.data?.[header.display_header] || ''
+        const cell = data?.cells?.[header.display_header]
+        const element = cell?.element_id ? elements.get(cell.element_id) : undefined
+        const label = element ? `${sourceLabel(element.element_type)} · p${cell?.page_number || element.page_number || '?'}` : '溯源信息不完整'
+        return <span className="review-cell-content"><span>{value}</span>{value && <i className={element ? 'cell-source-dot complete' : 'cell-source-dot incomplete'} title={label}/>}</span>
+      },
       cellClass: ({ data }) => {
         const cell = data?.cells?.[header.display_header]
         if (!cell) return 'cell-missing'
@@ -170,8 +182,43 @@ export function ReviewPage() {
 
   const onSelectionChanged = (event: SelectionChangedEvent<CandidateRecord>) => setSelectedRows(event.api.getSelectedRows().map((record) => record.candidate_record_id))
 
+  const setReviewMode = (mode: 'candidate' | 'standardized') => {
+    const next = new URLSearchParams(searchParams)
+    if (mode === 'candidate') next.delete('mode')
+    else next.set('mode', 'standardized')
+    setSearchParams(next, { replace: true })
+  }
+  const modeSwitch = <div className="review-mode-switch" role="tablist" aria-label="审核模式">
+    <button className={reviewMode === 'candidate' ? 'active' : ''} onClick={() => setReviewMode('candidate')}>候选数据审核</button>
+    <button className={reviewMode === 'standardized' ? 'active' : ''} onClick={() => setReviewMode('standardized')}>已标准化数据回查</button>
+  </div>
+
+  if (reviewMode === 'standardized') return <div className="page review-page">
+    <div className="page-title-row review-title-row"><div><h1>人工审核</h1><p>回查已标准化数据，点击任意单元格定位原始 PDF、映射和换算过程。</p></div>{modeSwitch}</div>
+    <StandardizedTraceView/>
+  </div>
+
+  const gridPanel = <section className="panel review-grid-panel">
+    <div className="ag-theme-quartz review-grid"><AgGridReact<CandidateRecord>
+      theme="legacy"
+      rowData={filteredRows}
+      columnDefs={columns}
+      defaultColDef={{ sortable: true, filter: true, resizable: true }}
+      rowSelection={{ mode: 'multiRow' }}
+      selectionColumnDef={{ pinned: 'left', width: 42, maxWidth: 42, suppressHeaderMenuButton: true }}
+      getRowId={({ data }) => data.candidate_record_id}
+      onSelectionChanged={onSelectionChanged}
+      onCellClicked={onCellClicked}
+      onCellValueChanged={onCellValueChanged}
+      tooltipShowDelay={250}
+    /></div>
+  </section>
+  const pdfPanel = <aside className="panel review-pdf-panel">
+    <PdfEvidenceViewer projectId={projectId} resources={resources.data || []} evidence={activeEvidence} onRequestFocus={() => setLayout(layout === 'pdf' ? 'balanced' : 'pdf')}/>
+  </aside>
+
   return <div className="page review-page">
-    <div className="page-title-row review-title-row"><div><h1>人工审核</h1><p>逐行确认候选数据，点击原文标签或单元格核对 PDF 证据。</p></div><div className="review-actions">
+    <div className="page-title-row review-title-row"><div><h1>人工审核</h1><p>逐行确认候选数据，点击原文标签或单元格核对 PDF 证据。</p></div><div className="review-title-actions">{modeSwitch}<div className="review-actions">
       <button disabled={!selectedRows.length} onClick={() => applyToSelected('reject')}><ShieldX size={15}/>拒绝 ({selectedRows.length})</button>
       <button className="primary-button" disabled={!selectedRows.length} onClick={() => applyToSelected('approve')}><ShieldCheck size={15}/>通过 ({selectedRows.length})</button>
       <button className="primary-button" onClick={async () => {
@@ -181,8 +228,8 @@ export function ReviewPage() {
         queryClient.invalidateQueries({ queryKey: ['trace-records', projectId] })
         queryClient.invalidateQueries({ queryKey: ['candidate-records', projectId, articleId] })
       }}>生成标准化记录</button>
-    </div></div>
-    <div className="review-toolbar panel">
+    </div></div></div>
+    <div className="review-toolbar">
       <div className="search-box"><Search size={15}/><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索 SampleID 或值"/></div>
       <select value={columnMode} onChange={(event) => setColumnMode(event.target.value as 'data' | 'all')}><option value="data">有值/待审核字段</option><option value="all">全部156字段</option></select>
       <select value={group} onChange={(event) => setGroup(event.target.value)}><option value="all">全部字段组</option><option value="basic">基本信息</option><option value="context">地层与样品</option><option value="organic">同位素与有机质</option><option value="major">主量元素</option><option value="trace">微量/REE/铁组分</option></select>
@@ -193,25 +240,6 @@ export function ReviewPage() {
       <button className="icon-button" title="恢复分栏" onClick={() => setLayout('balanced')}><RotateCcw size={16}/></button>
       <button className="icon-button" title="聚焦 PDF" onClick={() => setLayout('pdf')}><PanelRightOpen size={16}/></button>
     </div>
-    <div className={`review-workspace layout-${layout}`}>
-      <section className="panel review-grid-panel">
-        <div className="ag-theme-quartz review-grid"><AgGridReact<CandidateRecord>
-          rowData={filteredRows}
-          columnDefs={columns}
-          defaultColDef={{ sortable: true, filter: true, resizable: true }}
-          rowSelection={{ mode: 'multiRow' }}
-          selectionColumnDef={{ pinned: 'left', width: 42, maxWidth: 42, suppressHeaderMenuButton: true }}
-          getRowId={({ data }) => data.candidate_record_id}
-          onSelectionChanged={onSelectionChanged}
-          onCellClicked={onCellClicked}
-          onCellValueChanged={onCellValueChanged}
-          tooltipShowDelay={250}
-        /></div>
-      </section>
-      <aside className="panel review-pdf-panel">
-        <PdfEvidenceViewer projectId={projectId} resources={resources.data || []} evidence={activeEvidence} onRequestFocus={() => setLayout(layout === 'pdf' ? 'balanced' : 'pdf')}/>
-      </aside>
-      {layout !== 'balanced' && <button className="workspace-restore" onClick={() => setLayout('balanced')}><Maximize2 size={15}/>恢复双栏</button>}
-    </div>
+    {layout === 'balanced' ? <ResizableSplit storageKey="geochem.review.candidate.split" className="review-workspace" left={gridPanel} right={pdfPanel} minLeft={480} minRight={420}/> : <div className={`review-workspace layout-${layout}`}>{layout === 'table' ? gridPanel : pdfPanel}<button className="workspace-restore" onClick={() => setLayout('balanced')}><Maximize2 size={15}/>恢复双栏</button></div>}
   </div>
 }

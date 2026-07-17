@@ -1,7 +1,7 @@
-import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 'react'
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Bot, ChevronRight, FileSearch, FileUp, Link2, LoaderCircle, MessageSquarePlus, PanelRightClose, Send, Sparkles, Trash2 } from 'lucide-react'
+import { Bot, ChevronRight, FileSearch, FileUp, Link2, LoaderCircle, MessageSquarePlus, PanelLeftClose, PanelLeftOpen, PanelRightClose, Send, Sparkles, Trash2 } from 'lucide-react'
 import { api, watchAgentRun } from './api'
 import { PdfEvidenceViewer, type PdfEvidence } from './PdfEvidenceViewer'
 import { useAppStore } from './store'
@@ -88,16 +88,59 @@ export function ChatPage() {
   const [activeCitation, setActiveCitation] = useState<ChatCitation | undefined>()
   const [freeInput, setFreeInput] = useState('')
   const [inspectorOpen, setInspectorOpen] = useState(true)
+  const [threadPanelOpen, setThreadPanelOpen] = useState(() => {
+    const saved = window.localStorage.getItem('geochem.chat.thread-panel-open')
+    return saved === null ? window.innerWidth > 1450 : saved === 'true'
+  })
+  const [inspectorWidth, setInspectorWidth] = useState(() => {
+    const saved = Number(window.localStorage.getItem('geochem.chat.inspector-width'))
+    return Number.isFinite(saved) && saved >= 380 ? saved : 500
+  })
   const [source, setSource] = useState('')
   const [chatError, setChatError] = useState('')
   const [chatNotice, setChatNotice] = useState('')
   const [selectedResourceIds, setSelectedResourceIds] = useState<string[]>([])
   const [mappingEdits, setMappingEdits] = useState<Record<string, { enabled: boolean; target: string }>>({})
   const fileInput = useRef<HTMLInputElement>(null)
+  const workspaceRef = useRef<HTMLDivElement>(null)
   const invalidThreadIds = useRef(new Set<string>())
   const invalidRunIds = useRef(new Set<string>())
   const requestedThreadId = searchParams.get('thread_id') || ''
   const requestedRunId = searchParams.get('run_id') || ''
+
+  useEffect(() => { window.localStorage.setItem('geochem.chat.thread-panel-open', String(threadPanelOpen)) }, [threadPanelOpen])
+  useEffect(() => { window.localStorage.setItem('geochem.chat.inspector-width', String(Math.round(inspectorWidth))) }, [inspectorWidth])
+  useEffect(() => {
+    const constrainInspector = () => {
+      const width = workspaceRef.current?.getBoundingClientRect().width || 0
+      if (!width || window.innerWidth <= 1180) return
+      const threadWidth = threadPanelOpen ? 200 : 52
+      const maximum = Math.max(380, width - threadWidth - 460 - 32)
+      setInspectorWidth((current) => Math.min(current, maximum))
+    }
+    constrainInspector()
+    window.addEventListener('resize', constrainInspector)
+    return () => window.removeEventListener('resize', constrainInspector)
+  }, [threadPanelOpen])
+
+  const startInspectorResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    event.preventDefault()
+    const resize = (moveEvent: PointerEvent) => {
+      const rect = workspaceRef.current?.getBoundingClientRect()
+      if (!rect?.width) return
+      const threadWidth = threadPanelOpen ? 200 : 52
+      const maximum = Math.max(380, rect.width - threadWidth - 460 - 32)
+      setInspectorWidth(Math.max(380, Math.min(maximum, rect.right - moveEvent.clientX)))
+    }
+    const stop = () => {
+      window.removeEventListener('pointermove', resize)
+      window.removeEventListener('pointerup', stop)
+      document.body.classList.remove('is-resizing-panels')
+    }
+    document.body.classList.add('is-resizing-panels')
+    window.addEventListener('pointermove', resize)
+    window.addEventListener('pointerup', stop)
+  }
 
   const threads = useQuery({ queryKey: ['chat-threads', projectId], queryFn: () => api.chatThreads(projectId), enabled: Boolean(projectId) })
   useEffect(() => {
@@ -396,22 +439,16 @@ export function ChatPage() {
     event.target.value = ''
   }
 
-  return <div className={`page chat-page ${inspectorOpen ? '' : 'inspector-closed'}`}>
-    <div className="chat-title-row">
-      <div><h1>对话助手</h1><p>处理文章、核验数据或追溯任意已抽取条目。</p></div>
-      <button className="icon-button" title="收起证据面板" onClick={() => setInspectorOpen((value) => !value)}><PanelRightClose size={18}/></button>
-    </div>
-    <div className="chat-selection-bar">
-      <span>当前选择</span>
-      {selectedArticle ? <button onClick={() => selectEntity.mutate({ entityType: 'article', entityId: selectedArticle.entity_id })}>文章：{selectedArticle.title}</button> : <em>未选择文章</em>}
-      {selectedArticle && <button className="selection-start" onClick={() => send.mutate('开始数据提取')} disabled={send.isPending}>开始处理当前文章</button>}
-      {selectedHeader && <button onClick={() => selectEntity.mutate({ entityType: 'header_config', entityId: selectedHeader.entity_id })}>表头：{selectedHeader.title}</button>}
-      {selectedResource && <button onClick={() => selectEntity.mutate({ entityType: 'resource', entityId: selectedResource.entity_id })}>资源：{selectedResource.title}</button>}
-      {(selectedArticle || selectedHeader || selectedResource) && <button className="clear-selection" onClick={() => selectEntity.mutate({ entityType: 'clear' })}>清除选择</button>}
-      <span className="chat-model-status">模型：{actualModel}</span>
-    </div>
-    <div className="chat-workspace">
-      <aside className="panel chat-threads">
+  const workspaceStyle = { '--chat-inspector-width': `${inspectorWidth}px` } as CSSProperties
+
+  return <div className={`page chat-page ${inspectorOpen ? '' : 'inspector-closed'} ${threadPanelOpen ? '' : 'threads-closed'}`}>
+    <div ref={workspaceRef} className="chat-workspace chat-resizable-workspace" style={workspaceStyle}>
+      <aside className={`panel chat-threads ${threadPanelOpen ? '' : 'collapsed'}`}>
+        <div className="chat-sidebar-heading">
+          {threadPanelOpen && <><Bot size={19}/><h1>对话助手</h1></>}
+          <button className="icon-button chat-thread-panel-toggle" title={threadPanelOpen ? '收起对话列表' : '展开对话列表'} aria-label={threadPanelOpen ? '收起对话列表' : '展开对话列表'} onClick={() => setThreadPanelOpen((value) => !value)}>{threadPanelOpen ? <PanelLeftClose size={17}/> : <PanelLeftOpen size={18}/>}</button>
+        </div>
+        {threadPanelOpen && <>
         <button className="primary-button wide" onClick={() => createThread.mutate()} disabled={!projectId || createThread.isPending}><MessageSquarePlus size={17}/> 新建对话</button>
         <div className="chat-import">
           <input value={source} onChange={(event) => setSource(event.target.value)} placeholder="输入 DOI 或 URL" />
@@ -432,9 +469,30 @@ export function ChatPage() {
           </div>)}
           {!threads.data?.length && <div className="empty-state compact"><Bot size={28}/><p>从一个问题开始处理当前文章。</p></div>}
         </div>
+        </>}
       </aside>
       <section className="panel chat-main">
+        <div className="chat-main-toolbar">
+          <div className="chat-context-summary" aria-label="当前对话上下文">
+            <span className="context-label">当前文章</span>
+            {selectedArticle ? <button className="context-chip article" title={selectedArticle.title} onClick={() => selectEntity.mutate({ entityType: 'article', entityId: selectedArticle.entity_id })}>{selectedArticle.title}</button> : <em>未选择</em>}
+            {selectedHeader && <button className="context-chip" title={selectedHeader.title} onClick={() => selectEntity.mutate({ entityType: 'header_config', entityId: selectedHeader.entity_id })}>表头：{selectedHeader.title}</button>}
+            {selectedResource && <button className="context-chip" title={selectedResource.title} onClick={() => selectEntity.mutate({ entityType: 'resource', entityId: selectedResource.entity_id })}>资源：{selectedResource.title}</button>}
+            {selectedArticle && <button className="context-start-button" onClick={() => send.mutate('开始数据提取')} disabled={send.isPending}>开始处理</button>}
+            {(selectedArticle || selectedHeader || selectedResource) && <button className="context-clear-button" onClick={() => selectEntity.mutate({ entityType: 'clear' })}>清除</button>}
+            <span className="chat-model-status" title={actualModel}>模型：{actualModel}</span>
+          </div>
+          <button className="icon-button" title={inspectorOpen ? '收起证据面板' : '展开证据面板'} onClick={() => setInspectorOpen((value) => !value)}><PanelRightClose size={18}/></button>
+        </div>
         <div className="chat-transcript">
+          {!thread.data?.messages?.length && !activeRun.data?.status && <section className="chat-welcome" aria-label="对话快捷开始">
+            <div className="chat-welcome-heading"><Bot size={24}/><div><strong>从一项科研数据任务开始</strong><span>我会调用项目工具执行任务，并在需要确认时停下来。</span></div></div>
+            <div className="chat-welcome-actions">
+              <button onClick={() => setInput('搜索最新的地球化学数据文章')}><FileSearch size={18}/><span><strong>检索或导入文献</strong><small>查找公开论文、输入 DOI，或上传 PDF</small></span></button>
+              <button onClick={() => setInput('查询当前工作区已导入的文献')}><Sparkles size={18}/><span><strong>处理已导入文献</strong><small>选择文章并启动资源发现与数据抽取</small></span></button>
+              <button onClick={() => setInput('查询当前工作区的标准化数据及其溯源')}><FileSearch size={18}/><span><strong>查询数据与溯源</strong><small>定位样品、字段、原始证据和计算过程</small></span></button>
+            </div>
+          </section>}
           {(thread.data?.messages || []).map((message) => {
             const payload = (message.ui_payload || {}) as {
               kind?: string
@@ -506,6 +564,7 @@ export function ChatPage() {
         <div className="chat-suggestions">{QUICK_QUESTIONS.map((question) => <button key={question} onClick={() => setInput(question)}>{question}</button>)}</div>
         <form className="chat-composer" onSubmit={submit}><textarea value={input} onChange={(event) => setInput(event.target.value)} placeholder={conversationArticleId ? '例如：开始处理这篇文章，或询问一个数据来源…' : '例如：搜索地化数据文献，或输入 DOI: 10.xxxx/xxxx'} disabled={send.isPending}/><button className="primary-button" type="submit" disabled={!input.trim() || send.isPending}><Send size={18}/></button></form>
       </section>
+      {inspectorOpen && <button className="chat-inspector-resizer" aria-label="调整对话与资源查看宽度" title="拖拽调整资源查看宽度" onPointerDown={startInspectorResize}><span/></button>}
       {inspectorOpen && <aside className="panel chat-inspector">
         <div className="inspector-heading"><FileSearch size={18}/><strong>{inspectorTitle}</strong></div>
         {!articlePdfOnly && selectedArticle && <div className="source-preview-card"><strong>{selectedArticle.title}</strong><small>当前文章 · {selectedArticle.subtitle}</small><button className="secondary-button" onClick={() => navigate('/workbench')}>在智能体工作台中手动处理</button></div>}

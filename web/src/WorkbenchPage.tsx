@@ -514,7 +514,7 @@ function CandidateGrid({
       </div>
       <button disabled={selectedRows.length < 2} onClick={async () => { await api.mergeRecords(projectId, selectedRows); setSelectedRows([]); onRefresh() }}>合并所选行</button>
     </div>
-    <div className={`ag-theme-quartz candidate-grid ${compact ? 'compact' : ''}`}><AgGridReact rowData={rowData} columnDefs={columns} defaultColDef={{ sortable: true, filter: true, resizable: true }} rowSelection={{ mode: 'multiRow' }} getRowId={(params) => params.data.__record.candidate_record_id} onSelectionChanged={(event) => setSelectedRows(event.api.getSelectedRows().map((row) => row.__record.candidate_record_id))} onCellValueChanged={valueChanged} onCellClicked={clicked} /></div>
+    <div className={`ag-theme-quartz candidate-grid ${compact ? 'compact' : ''}`}><AgGridReact theme="legacy" rowData={rowData} columnDefs={columns} defaultColDef={{ sortable: true, filter: true, resizable: true }} rowSelection={{ mode: 'multiRow' }} selectionColumnDef={{ pinned: 'left', lockPosition: 'left', width: 42, minWidth: 42, maxWidth: 42, suppressHeaderMenuButton: true }} getRowId={(params) => params.data.__record.candidate_record_id} onSelectionChanged={(event) => setSelectedRows(event.api.getSelectedRows().map((row) => row.__record.candidate_record_id))} onCellValueChanged={valueChanged} onCellClicked={clicked} /></div>
   </>
 }
 
@@ -712,8 +712,8 @@ function ProcessingStageCards({
   collapsed,
   onStage,
   onToggleCollapsed,
-  onExtractTables,
   onStandardizeTables,
+  onExtractTables,
   onExtractAll,
   onValidateEvidence,
   onMerge,
@@ -726,13 +726,14 @@ function ProcessingStageCards({
   collapsed: boolean
   onStage: (stage: ExtractionStage) => void
   onToggleCollapsed: () => void
-  onExtractTables: () => void
   onStandardizeTables: () => void
+  onExtractTables: () => void
   onExtractAll: () => void
   onValidateEvidence: () => void
   onMerge: () => void
   onNext: () => void
 }) {
+  const stageListRef = useRef<HTMLDivElement>(null)
   const tableCount = selected.filter((element) => element.element_type === 'table').length
   const paragraphCount = selected.filter((element) => element.element_type === 'paragraph').length
   const figureCount = selected.filter((element) => element.element_type === 'figure').length
@@ -744,6 +745,10 @@ function ProcessingStageCards({
     { id: 'figures' as ExtractionStage, short: '图', title: EXTRACTION_STAGE_LABELS.figures, meta: `${figureCount} 个图像 · 人工补值`, action: undefined, actionText: '在中间选择图像补值', disabled: true },
     { id: 'edit' as ExtractionStage, short: '改', title: EXTRACTION_STAGE_LABELS.edit, meta: activeBatchId ? '合并、增删改查、校验证据' : '尚未生成候选表', action: onMerge, actionText: '合并候选结果', disabled: !activeBatchId },
   ]
+  useEffect(() => {
+    if (collapsed) return
+    stageListRef.current?.querySelector<HTMLElement>(`[data-stage="${activeStage}"]`)?.scrollIntoView({ block: 'nearest' })
+  }, [activeStage, collapsed])
   if (collapsed) {
     return <div className="stage-rail-collapsed">
       <button className="rail-toggle" onClick={onToggleCollapsed} title="展开抽取阶段"><ChevronRight size={16} /></button>
@@ -758,9 +763,9 @@ function ProcessingStageCards({
       </button>)}
     </div>
   }
-  return <div className="stage-card-list">
+  return <div className="stage-card-list" ref={stageListRef}>
     <button className="stage-collapse-button" onClick={onToggleCollapsed}><ChevronLeft size={14} />收起阶段栏</button>
-    {cards.map((card) => <article key={card.id} className={`stage-card ${activeStage === card.id ? 'open' : ''}`}>
+    {cards.map((card) => <article key={card.id} data-stage={card.id} className={`stage-card ${activeStage === card.id ? 'open' : ''}`}>
       <button className="stage-card-head" onClick={() => onStage(card.id)}>
         <span><strong>{card.title}</strong></span><b>{activeStage === card.id ? '⌃' : '⌄'}</b>
       </button>
@@ -1576,13 +1581,16 @@ export default function WorkbenchPage() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const agentRunId = searchParams.get('agent_run_id') || ''
+  const showRulesView = searchParams.get('view') === 'rules'
   const handedOffStep = Number(searchParams.get('step') || 0)
   const handedOffStage = searchParams.get('stage') || ''
   const returnTo = searchParams.get('return_to') || '/chat'
   const { projectId, articleId, activeElement, setActiveElement, activeCell, setActiveCell, logs, addLog, clearLogs } = useAppStore()
-  const [step, setStep] = useState(() => Number.isInteger(handedOffStep) && handedOffStep >= 0 && handedOffStep < WORKBENCH_STEPS.length ? handedOffStep : 0)
+  const [step, setStep] = useState(() => showRulesView ? 2 : Number.isInteger(handedOffStep) && handedOffStep >= 0 && handedOffStep < WORKBENCH_STEPS.length ? handedOffStep : 0)
   const [extractionStage, setExtractionStage] = useState<ExtractionStage>(() => (
-    ['table_standardize', 'mapping', 'tables', 'paragraphs', 'figures', 'edit'].includes(handedOffStage)
+    showRulesView
+      ? 'mapping'
+      : ['table_standardize', 'mapping', 'tables', 'paragraphs', 'figures', 'edit'].includes(handedOffStage)
       ? handedOffStage as ExtractionStage
       : 'table_standardize'
   ))
@@ -1609,6 +1617,12 @@ export default function WorkbenchPage() {
   const resources = useQuery({ queryKey: ['resources', projectId, articleId], queryFn: () => api.resources(projectId, articleId), enabled: Boolean(projectId && articleId) })
   const activeBatchId = session.data?.active_batch_id || ''
   const batch = useQuery({ queryKey: ['batch', projectId, activeBatchId], queryFn: () => api.batch(projectId, activeBatchId), enabled: Boolean(projectId && activeBatchId) })
+
+  useEffect(() => {
+    if (!showRulesView) return
+    setStep(2)
+    setExtractionStage('mapping')
+  }, [showRulesView])
 
   const refreshWorkbench = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ['session', projectId, articleId] })
@@ -1732,7 +1746,6 @@ export default function WorkbenchPage() {
         <div className="panel-heading"><strong>抽取表格资源</strong><span>{tables.length}</span></div>
         <p className="card-desc">从已加入抽取队列的表格资源生成第一版样品级候选表。表格值会标记为本地表格解析或 LLM 表格抽取来源。</p>
         <div className="stage-resource-list">{tables.map((element) => <button key={element.element_id} onClick={() => openInPdf(element)}><ElementIcon type={element.element_type} />{elementPageLabel(element)}<small>{element.caption || element.text_content.slice(0, 80)}</small></button>)}</div>
-        <div className="preflight-actions"><button className="primary-button" disabled={busy || !tables.length} onClick={() => runTask(() => api.extractTables(projectId, articleId, false), 2)}>开始抽取表格资源</button></div>
       </section>
     }
     if (extractionStage === 'tables') {
