@@ -75,15 +75,16 @@ export OPENROUTER_API_KEY="sk-or-..."
 # ... other providers as needed
 ```
 
-### Start the local Web application
+### Start the Web application
 
 ```bash
 .venv/bin/geochem-ui
 # Open http://127.0.0.1:8765
 ```
 
-The previous Qt interface remains available during migration as
-`.venv/bin/geochem-legacy-ui`.
+The React + FastAPI application is the sole graphical interface. The explicit
+`.venv/bin/geochem-web` command starts the same Web service; `geochem-ui` is
+kept as a backwards-compatible alias.
 
 ### 2. Create a project
 

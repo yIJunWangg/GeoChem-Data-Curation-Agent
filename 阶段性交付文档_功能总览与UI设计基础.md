@@ -1,5 +1,7 @@
 # GeoChem Data Curation Agent 阶段性交付文档
 
+> 历史交付说明：本文记录早期 CLI/桌面 UI 设计基础；当前唯一图形界面为 React + FastAPI Web 应用，PySide6 页面已移除。
+
 版本：V1 CLI 闭环 + Agent 进化闭环 + WP6 Export/Trace/Cost  
 日期：2026-05-29  
 阶段定位：可审核、可追溯、可学习、可导出的科研地化数据整理 CLI 原型，为后续 UI 设计提供功能边界与信息架构基础。

@@ -1,5 +1,7 @@
 # GeoChem Data Curation Agent 产品文档
 
+> 历史设计说明：文档中涉及 PySide6/PyQt 的桌面界面方案已停止维护；当前唯一图形界面为 React + FastAPI Web 应用。业务能力说明仍供参考。
+
 ## 1. 产品名称
 
 **GeoChem Data Curation Agent**  
@@ -1445,4 +1447,3 @@ V1 阶段建议目标：
 ## 21. 产品一句话总结
 
 GeoChem Data Curation Agent 是一个面向地球化学文献的数据整理 Agent，它以用户定义的数据库表头为核心，自动从论文正文、补充材料和后续图像中发现并抽取相关数据，通过字段映射、单位换算、人工审核、规则记忆、计算归档和 token 成本统计，最终生成可追溯、可审核、可入库的标准化地球化学数据。
-

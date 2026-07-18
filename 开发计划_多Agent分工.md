@@ -1,5 +1,7 @@
 # GeoChem Data Curation Agent — 多 Agent 开发分工计划（修订版）
 
+> 历史计划说明：本文中的 PySide6 桌面 UI 工作包已由 React + FastAPI Web 实现取代，不再作为当前开发路线。
+
 ## 0. 修订结论
 
 ### 0.1 核心修订点

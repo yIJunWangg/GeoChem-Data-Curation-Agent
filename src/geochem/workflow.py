@@ -1,4 +1,4 @@
-"""Lightweight workflow orchestration for CLI and UI callers."""
+"""Lightweight workflow orchestration for CLI and Web/API callers."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ from .providers.llm_client import LLMClient
 
 @dataclass
 class WorkflowEvent:
-    """A UI-friendly workflow event."""
+    """A client-friendly workflow event."""
 
     event_type: str
     message: str
@@ -46,7 +46,7 @@ class WorkflowEvent:
 
 
 class EventBus:
-    """Small in-process pub/sub used by the desktop UI."""
+    """Small in-process pub/sub used by workflow clients."""
 
     def __init__(self):
         self._subscribers: list[Callable[[WorkflowEvent], None]] = []
@@ -1518,20 +1518,3 @@ class WorkflowRunner:
             return {"rule_id": rule_id, "status": status}
         finally:
             db.close()
-
-
-class TaskService:
-    """Synchronous task facade for UI buttons and tests.
-
-    The PySide layer can run these methods in a QThread later; keeping this class
-    UI-free makes the business flow easy to test.
-    """
-
-    def __init__(self, runner: WorkflowRunner | None = None):
-        self.runner = runner or WorkflowRunner()
-
-    def run(self, action: str, **kwargs) -> Any:
-        if not hasattr(self.runner, action):
-            raise ValueError(f"Unknown workflow action: {action}")
-        method = getattr(self.runner, action)
-        return method(**kwargs)

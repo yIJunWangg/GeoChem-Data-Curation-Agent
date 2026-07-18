@@ -18,6 +18,12 @@ web/vite.config.d.ts
 logs/
 .mimocode/
 tests/
+!tests/
+tests/*
+!tests/unit/
+tests/unit/*
+!tests/unit/test_header_config_importer.py
+!tests/unit/test_workflow.py
 .DS_Store
 geochem-data/
 output/

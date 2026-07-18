@@ -4,7 +4,6 @@ version = "0.1.0"
 description = "GeoChem Data Curation Agent - Schema-driven geochemical literature data extraction and standardization"
 requires-python = ">=3.10"
 dependencies = [
-    "PySide6>=6.5",
     "pandas>=2.0",
     "openpyxl>=3.1",
     "python-docx>=0.8.11",
@@ -34,7 +33,6 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",
-    "pytest-qt>=4.2",
     "pytest-cov>=4.0",
 ]
 
@@ -42,7 +40,6 @@ dev = [
 geochem = "geochem.cli:app"
 geochem-ui = "geochem.web.server:main"
 geochem-web = "geochem.web.server:main"
-geochem-legacy-ui = "geochem.ui.app:main"
 
 [build-system]
 requires = ["setuptools>=68.0"]
