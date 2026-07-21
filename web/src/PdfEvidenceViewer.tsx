@@ -5,7 +5,7 @@ import {
   ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, Focus,
   Maximize2, Minus, Plus,
 } from 'lucide-react'
-import { api } from './api'
+import { api, authenticatedFile } from './api'
 import type { EvidenceSource, Resource } from './types'
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker
@@ -78,6 +78,7 @@ export function PdfEvidenceViewer({ projectId, resources, evidence, details, onR
     setZoom((current) => clamp(Math.round((current + delta) * 10) / 10, 0.5, 2.5))
   }
   const renderedWidth = fitWidth ? Math.max(320, containerWidth - 28) : Math.round(720 * zoom)
+  const pdfFile = useMemo(() => resourceId ? authenticatedFile(api.pdfUrl(projectId, resourceId)) : undefined, [projectId, resourceId])
   const spans = evidence?.page_spans?.length ? evidence.page_spans : (evidence?.bbox?.length === 4 && evidence?.page_number ? [{ page_number: evidence.page_number, bbox: evidence.bbox, role: 'evidence' }] : [])
   const activeSpan = spans[Math.min(activeSpanIndex, Math.max(0, spans.length - 1))]
   const bbox = activeSpan?.bbox || []
@@ -100,9 +101,9 @@ export function PdfEvidenceViewer({ projectId, resources, evidence, details, onR
       {onRequestFocus && <button className="icon-button" title="聚焦 PDF" onClick={onRequestFocus}><Maximize2 size={15}/></button>}
     </div>
     <div className="pdf-evidence-scroll" ref={containerRef}>
-      {resourceId ? <Document
+      {pdfFile ? <Document
         key={resourceId}
-        file={api.pdfUrl(projectId, resourceId)}
+        file={pdfFile}
         onLoadSuccess={({ numPages }) => { setPageCount(numPages); setPageNumber((current) => clamp(current, 1, numPages)) }}
         loading={<div className="empty-state compact">正在载入 PDF...</div>}
         error={<div className="empty-state compact">PDF 加载失败，请检查原文件。</div>}

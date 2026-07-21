@@ -9,7 +9,8 @@ import {
   ArrowRight, BoxSelect, Check, ChevronLeft, ChevronRight, Eye, FileText,
   Image, LoaderCircle, Play, Search, Sparkles, Table2, Trash2,
 } from 'lucide-react'
-import { api, watchTask } from './api'
+import { api, authenticatedFile, watchTask } from './api'
+import { AuthenticatedImage } from './AuthenticatedImage'
 import { buildGridRows, WORKBENCH_STEPS } from './candidateGrid'
 import { useAppStore } from './store'
 import type { BatchPayload, CandidateCell, CandidateRecord, DocumentElement, HeaderField, ParagraphCue, TableRuleSuggestion, WorkflowEvent } from './types'
@@ -184,7 +185,7 @@ function ResourcePreview({ element }: { element: DocumentElement }) {
     return <TableResourcePreview table={element.raw_table} fallbackText={element.text_content || element.caption || '表格资源'} />
   }
   if (element.element_type === 'figure' && element.preview_path && !imageFailed) {
-    return <img src={api.previewUrl(useAppStore.getState().projectId, element.element_id)} alt="资源预览" onError={() => setImageFailed(true)} />
+    return <AuthenticatedImage src={api.previewUrl(useAppStore.getState().projectId, element.element_id)} alt="资源预览" onLoadError={() => setImageFailed(true)} />
   }
   return <p>{element.text_content || element.caption}</p>
 }
@@ -195,7 +196,7 @@ function DetailPreview({ element, projectId }: { element: DocumentElement; proje
     return <TableResourcePreview table={element.raw_table} fallbackText={element.text_content || element.caption || '表格资源'} />
   }
   if (element.preview_path && !imageFailed) {
-    return <img className="inspector-preview" src={api.previewUrl(projectId, element.element_id)} onError={() => setImageFailed(true)} />
+    return <AuthenticatedImage className="inspector-preview" src={api.previewUrl(projectId, element.element_id)} onLoadError={() => setImageFailed(true)} />
   }
   return null
 }
@@ -397,7 +398,7 @@ function PdfWorkbench({ projectId, articleId, elements, resources, active, onAct
           <BoxSelect size={16} /><select value={manualType} onChange={(event) => setManualType(event.target.value)}><option value="inspect">点击查看资源</option><option value="table">框选表格</option><option value="figure">框选图像</option><option value="paragraph">框选段落</option></select>
         </div>
         <div className="pdf-scroll">
-          {resourceId ? <Document file={api.pdfUrl(projectId, resourceId)} onLoadSuccess={({ numPages }) => setPageCount(numPages)} loading={<div className="empty-state">正在载入 PDF...</div>}>
+          {resourceId ? <Document file={authenticatedFile(api.pdfUrl(projectId, resourceId))} onLoadSuccess={({ numPages }) => setPageCount(numPages)} loading={<div className="empty-state">正在载入 PDF...</div>}>
             <div className="pdf-page-wrap" onPointerDown={beginDraw} onPointerMove={moveDraw} onPointerUp={finishDraw}>
               <Page pageNumber={pageNumber} width={pageWidth} renderAnnotationLayer renderTextLayer />
               <div className="pdf-overlay">
@@ -1269,7 +1270,7 @@ function FigureEvidencePanel({
       </div>
       <div className="figure-zoom-viewport">
         {activeFigure.preview_path && !imageFailed
-          ? <img className="figure-large-preview" style={{ width: `${zoom * 100}%` }} src={api.previewUrl(useAppStore.getState().projectId, activeFigure.element_id)} onError={() => setImageFailed(true)} />
+          ? <AuthenticatedImage className="figure-large-preview" style={{ width: `${zoom * 100}%` }} src={api.previewUrl(useAppStore.getState().projectId, activeFigure.element_id)} onLoadError={() => setImageFailed(true)} />
           : <div className="figure-placeholder">{activeFigure.text_content || activeFigure.caption || '当前图像没有可用预览。'}</div>}
       </div>
       <p>{activeFigure.caption || activeFigure.text_content || '当前图像没有图注。'}</p>

@@ -8,6 +8,7 @@ import 'ag-grid-community/styles/ag-theme-quartz.css'
 import 'react-pdf/dist/Page/AnnotationLayer.css'
 import 'react-pdf/dist/Page/TextLayer.css'
 import App from './App'
+import { AuthProvider } from './auth'
 import './styles.css'
 
 ModuleRegistry.registerModules([AllCommunityModule])
@@ -16,8 +17,7 @@ const client = new QueryClient({ defaultOptions: { queries: { staleTime: 15_000,
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <QueryClientProvider client={client}>
-      <BrowserRouter><App /></BrowserRouter>
+      <AuthProvider><BrowserRouter><App /></BrowserRouter></AuthProvider>
     </QueryClientProvider>
   </React.StrictMode>,
 )
-

@@ -1,9 +1,104 @@
 import type { AgentRun, Article, BatchPayload, ChatCitation, ChatThread, ChatThreadState, DocumentElement, HeaderConfig, HeaderField, ParagraphCue, Resource, TableRulePreflight, TraceRecordDetail, TraceRecordSummary, WorkflowEvent, Workspace } from './types'
 
+export type AdminRuntimeStatus = {
+  profile: string
+  build_id: string
+  auth_mode: string
+  database: string
+  task_backend: string
+  credential_vault_ready?: boolean
+  user_management: { mode: string; available: boolean; realm: string; message: string }
+}
+
+export type AdminOverview = {
+  users_total: number
+  users_enabled: number
+  active_credentials: number
+  active_allocations: number
+  storage_quota_bytes: number
+  storage_used_bytes: number
+  running_tasks: number
+  failed_tasks: number
+  credential_vault_ready: boolean
+}
+
+export type AdminModelCredential = {
+  credential_id: string
+  name: string
+  provider: string
+  api_format: string
+  base_url: string
+  model_id: string
+  secret_ref: string
+  key_fingerprint: string
+  secret_configured: boolean
+  enabled: boolean
+  created_by: string
+  created_at: string
+  updated_at: string
+}
+
+export type AdminUserPolicy = {
+  user_id: string
+  storage: { quota_bytes: number; used_bytes: number; updated_at: string }
+  model_allocations: Array<{
+    allocation_id: string
+    credential_id: string
+    credential_name: string
+    provider: string
+    model_id: string
+    enabled: number | boolean
+    monthly_token_limit: number
+    monthly_cost_limit: number
+  }>
+}
+
+export type AdminUser = {
+  id: string
+  username: string
+  email: string
+  first_name: string
+  last_name: string
+  enabled: boolean
+  email_verified: boolean
+  created_at: number
+  roles: string[]
+}
+
+export type AdminUsersResponse = {
+  users: AdminUser[]
+  total: number
+  first: number
+  limit: number
+  preview?: boolean
+}
+
 const JSON_HEADERS = { 'Content-Type': 'application/json' }
+let apiAccessToken = ''
+const authenticatedFileCache = new Map<string, { url: string; httpHeaders: Record<string, string> }>()
+
+export function setApiAccessToken(value: string) {
+  if (apiAccessToken !== value) authenticatedFileCache.clear()
+  apiAccessToken = value
+}
+
+export function apiAuthorizationHeaders(): Record<string, string> {
+  return apiAccessToken ? { Authorization: `Bearer ${apiAccessToken}` } : {}
+}
+
+export function authenticatedFile(url: string) {
+  const cacheKey = `${apiAccessToken}\n${url}`
+  const existing = authenticatedFileCache.get(cacheKey)
+  if (existing) return existing
+  const next = { url, httpHeaders: apiAuthorizationHeaders() }
+  authenticatedFileCache.set(cacheKey, next)
+  return next
+}
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, init)
+  const headers = new Headers(init?.headers)
+  if (apiAccessToken) headers.set('Authorization', `Bearer ${apiAccessToken}`)
+  const response = await fetch(url, apiAccessToken || init?.headers ? { ...init, headers } : init)
   if (!response.ok) {
     const body = await response.text()
     let detail = body
@@ -20,7 +115,72 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>
 }
 
+async function download(url: string): Promise<string> {
+  const response = await fetch(url, { headers: apiAuthorizationHeaders() })
+  if (!response.ok) {
+    const body = await response.text()
+    let detail = body
+    try {
+      const parsed = JSON.parse(body)
+      detail = typeof parsed.detail === 'string' ? parsed.detail : body
+    } catch {
+      detail = body
+    }
+    throw new Error(detail || `${response.status} ${response.statusText}`)
+  }
+  const disposition = response.headers.get('content-disposition') || ''
+  const encoded = disposition.match(/filename\*=utf-8''([^;]+)/i)?.[1]
+  const plain = disposition.match(/filename="?([^";]+)"?/i)?.[1]
+  const filename = encoded ? decodeURIComponent(encoded) : (plain || 'geochem-export')
+  const objectUrl = URL.createObjectURL(await response.blob())
+  const anchor = document.createElement('a')
+  anchor.href = objectUrl
+  anchor.download = filename
+  anchor.style.display = 'none'
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
+  return filename
+}
+
 export const api = {
+  adminStatus: () => request<AdminRuntimeStatus>('/api/v1/admin/status'),
+  adminOverview: () => request<AdminOverview>('/api/v1/admin/overview'),
+  adminUsers: (query = '', first = 0, limit = 100) => {
+    const params = new URLSearchParams({ q: query, first: String(first), limit: String(limit) })
+    return request<AdminUsersResponse>(`/api/v1/admin/users?${params.toString()}`)
+  },
+  createAdminUser: (payload: Record<string, unknown>) =>
+    request<AdminUser>('/api/v1/admin/users', { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(payload) }),
+  updateAdminUser: (userId: string, payload: Record<string, unknown>) =>
+    request<AdminUser>(`/api/v1/admin/users/${encodeURIComponent(userId)}`, { method: 'PATCH', headers: JSON_HEADERS, body: JSON.stringify(payload) }),
+  updateAdminUserRoles: (userId: string, roles: string[]) =>
+    request<AdminUser>(`/api/v1/admin/users/${encodeURIComponent(userId)}/roles`, { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify({ roles }) }),
+  resetAdminUserPassword: (userId: string, password: string, temporary = true) =>
+    request<{status:string;user_id:string;temporary:boolean}>(`/api/v1/admin/users/${encodeURIComponent(userId)}/reset-password`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ password, temporary }) }),
+  logoutAdminUser: (userId: string) =>
+    request<{status:string;user_id:string}>(`/api/v1/admin/users/${encodeURIComponent(userId)}/logout`, { method: 'POST' }),
+  deleteAdminUser: (userId: string) =>
+    request<{status:string;user_id:string}>(`/api/v1/admin/users/${encodeURIComponent(userId)}`, { method: 'DELETE' }),
+  adminModelCredentials: () => request<{vault_ready:boolean;credentials:AdminModelCredential[]}>('/api/v1/admin/model-credentials'),
+  createAdminModelCredential: (payload: Record<string, unknown>) =>
+    request<AdminModelCredential>('/api/v1/admin/model-credentials', { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(payload) }),
+  updateAdminModelCredential: (credentialId: string, payload: Record<string, unknown>) =>
+    request<AdminModelCredential>(`/api/v1/admin/model-credentials/${encodeURIComponent(credentialId)}`, { method: 'PATCH', headers: JSON_HEADERS, body: JSON.stringify(payload) }),
+  deleteAdminModelCredential: (credentialId: string) =>
+    request<{status:string;credential_id:string}>(`/api/v1/admin/model-credentials/${encodeURIComponent(credentialId)}`, { method: 'DELETE' }),
+  adminUserPolicy: (userId: string) => request<AdminUserPolicy>(`/api/v1/admin/users/${encodeURIComponent(userId)}/policy`),
+  updateAdminUserStorageQuota: (userId: string, quotaBytes: number) =>
+    request<AdminUserPolicy['storage']>(`/api/v1/admin/users/${encodeURIComponent(userId)}/storage-quota`, { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify({ quota_bytes: quotaBytes }) }),
+  updateAdminUserModelAllocation: (userId: string, payload: Record<string, unknown>) =>
+    request<AdminUserPolicy>(`/api/v1/admin/users/${encodeURIComponent(userId)}/model-allocation`, { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify(payload) }),
+  adminTasks: (limit = 200) => request<{tasks:Record<string, unknown>[]}>(`/api/v1/admin/tasks?limit=${limit}`),
+  adminAuditEvents: (limit = 200, userId = '') => {
+    const params = new URLSearchParams({ limit: String(limit) })
+    if (userId) params.set('user_id', userId)
+    return request<{events:Record<string, unknown>[]}>(`/api/v1/admin/audit-events?${params.toString()}`)
+  },
   chatThreads: (projectId: string, articleId = '') => {
     const params = new URLSearchParams({ project_id: projectId })
     if (articleId) params.set('article_id', articleId)
@@ -225,13 +385,21 @@ export const api = {
   },
   traceRecord: (projectId: string, recordId: string) =>
     request<any>(`/api/v1/trace-records/${recordId}?project_id=${encodeURIComponent(projectId)}`),
-  exportArticle: (projectId: string, articleId: string, format = 'csv', outputDir = '') => {
-    const params = new URLSearchParams({ project_id: projectId, format })
-    if (outputDir) params.set('output_dir', outputDir)
-    return request<{path: string; records: number; format: string}>(`/api/v1/articles/${articleId}/export?${params.toString()}`)
+  exportArticle: (projectId: string, articleId: string, format = 'csv', outputDir = '') =>
+    request<{job_id: string; path: string; records: number; format: string}>(`/api/v1/articles/${articleId}/export`, {
+      method: 'POST',
+      headers: JSON_HEADERS,
+      body: JSON.stringify({ project_id: projectId, format, output_dir: outputDir }),
+    }),
+  exportJobs: (projectId: string, articleId = '', limit = 20) => {
+    const params = new URLSearchParams({ project_id: projectId, limit: String(limit) })
+    if (articleId) params.set('article_id', articleId)
+    return request<{job_id:string;article_id:string;export_format:string;record_count:number;status:string;created_at:string}[]>(`/api/v1/export-jobs?${params.toString()}`)
   },
+  downloadExport: (projectId: string, jobId: string) =>
+    download(`/api/v1/export-jobs/${jobId}/download?project_id=${encodeURIComponent(projectId)}`),
   exportDirectory: (projectId: string) =>
-    request<{path: string; is_default: boolean}>(`/api/v1/export-directory?project_id=${encodeURIComponent(projectId)}`),
+    request<{path: string; is_default: boolean; managed?: boolean}>(`/api/v1/export-directory?project_id=${encodeURIComponent(projectId)}`),
   saveExportDirectory: (path: string) =>
     request<{path: string; status: string}>('/api/v1/export-directory', { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify({ path }) }),
   openExportDirectory: (projectId: string, path: string) =>
@@ -241,20 +409,15 @@ export const api = {
 }
 
 export function watchTask(projectId: string, taskId: string, onEvent: (event: WorkflowEvent) => void, onDone: () => void): () => void {
-  const source = new EventSource(`/api/v1/tasks/${taskId}/events?project_id=${encodeURIComponent(projectId)}`)
-  source.onmessage = (message) => {
-    const event = JSON.parse(message.data) as WorkflowEvent
-    onEvent(event)
-    if (event.progress >= 1) {
-      source.close()
-      onDone()
-    }
-  }
-  source.onerror = () => {
-    source.close()
-    onDone()
-  }
-  return () => source.close()
+  return watchSse(
+    `/api/v1/tasks/${taskId}/events?project_id=${encodeURIComponent(projectId)}`,
+    (payload) => {
+      const event = payload as WorkflowEvent
+      onEvent(event)
+      return event.progress >= 1
+    },
+    onDone,
+  )
 }
 
 export function watchAgentRun(
@@ -263,18 +426,60 @@ export function watchAgentRun(
   onEvent: (event: { event_id: number; level: string; message: string; done?: boolean }) => void,
   onDone: () => void,
 ): () => void {
-  const source = new EventSource(`/api/v1/agent-runs/${runId}/events?project_id=${encodeURIComponent(projectId)}`)
-  source.onmessage = (message) => {
-    const event = JSON.parse(message.data) as { event_id: number; level: string; message: string; done?: boolean }
-    onEvent(event)
-    if (event.done) {
-      source.close()
-      onDone()
-    }
-  }
-  source.onerror = () => {
-    source.close()
+  return watchSse(
+    `/api/v1/agent-runs/${runId}/events?project_id=${encodeURIComponent(projectId)}`,
+    (payload) => {
+      const event = payload as { event_id: number; level: string; message: string; done?: boolean }
+      onEvent(event)
+      return Boolean(event.done)
+    },
+    onDone,
+  )
+}
+
+function watchSse(
+  url: string,
+  onPayload: (payload: Record<string, any>) => boolean,
+  onDone: () => void,
+): () => void {
+  const controller = new AbortController()
+  let completed = false
+  const finish = () => {
+    if (completed) return
+    completed = true
     onDone()
   }
-  return () => source.close()
+  void (async () => {
+    try {
+      const response = await fetch(url, {
+        headers: { Accept: 'text/event-stream', ...apiAuthorizationHeaders() },
+        signal: controller.signal,
+      })
+      if (!response.ok || !response.body) throw new Error(`${response.status} ${response.statusText}`)
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      while (!controller.signal.aborted) {
+        const { value, done } = await reader.read()
+        buffer += decoder.decode(value, { stream: !done })
+        let boundary = buffer.indexOf('\n\n')
+        while (boundary >= 0) {
+          const block = buffer.slice(0, boundary)
+          buffer = buffer.slice(boundary + 2)
+          const data = block.split('\n').filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim()).join('\n')
+          if (data && onPayload(JSON.parse(data))) {
+            controller.abort()
+            finish()
+            return
+          }
+          boundary = buffer.indexOf('\n\n')
+        }
+        if (done) break
+      }
+      if (!controller.signal.aborted) finish()
+    } catch {
+      if (!controller.signal.aborted) finish()
+    }
+  })()
+  return () => controller.abort()
 }
