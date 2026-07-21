@@ -8,8 +8,10 @@ COPY web/ ./
 RUN npm run build
 
 FROM python:3.12-slim-bookworm AS python-builder
+ARG PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cpu
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    PIP_EXTRA_INDEX_URL=${PIP_EXTRA_INDEX_URL}
 WORKDIR /build
 RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential \
@@ -19,10 +21,12 @@ COPY src/ ./src/
 RUN python -m pip wheel --wheel-dir /wheels .
 
 FROM python:3.12-slim-bookworm AS runtime
+ARG PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cpu
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1 \
+    PIP_EXTRA_INDEX_URL=${PIP_EXTRA_INDEX_URL} \
     GEOCHEM_WEB_DIST=/app/web/dist \
     GEOCHEM_CONFIG=/data/config/settings.local.yaml
 
