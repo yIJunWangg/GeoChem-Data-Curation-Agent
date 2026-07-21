@@ -13,6 +13,7 @@ from typing import Any, Callable
 
 from .core.config import load_config
 from .core.project import ProjectManager
+from .core.runtime import RuntimeProfile, load_runtime_settings
 from .curation.resource_scoring import ResourceScoringEngine
 from .curation.target_headers import classify_field
 from .providers.llm_client import LLMClient
@@ -3092,11 +3093,65 @@ class WorkbenchService:
                 (job_id, project_id, article_id, format, str(path), len(rows), datetime.now().isoformat()),
             )
             db.commit()
-            return {"path": str(path), "records": len(rows), "format": format}
+            return {
+                "job_id": job_id,
+                "path": str(path),
+                "records": len(rows),
+                "format": format,
+            }
+        finally:
+            db.close()
+
+    def export_jobs(
+        self,
+        project_id: str,
+        article_id: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """List completed and failed exports without exposing unrelated projects."""
+
+        db = self.pm.get_database(project_id)
+        try:
+            sql = (
+                "SELECT job_id, project_id, article_id, export_format, output_path, "
+                "record_count, status, created_at FROM export_jobs WHERE project_id = ?"
+            )
+            params: list[Any] = [project_id]
+            if article_id:
+                sql += " AND article_id = ?"
+                params.append(article_id)
+            sql += " ORDER BY created_at DESC LIMIT ?"
+            params.append(max(1, min(int(limit), 200)))
+            return [dict(row) for row in db.fetch_all(sql, tuple(params))]
+        finally:
+            db.close()
+
+    def export_job(self, project_id: str, job_id: str) -> dict[str, Any]:
+        """Resolve one export job inside its owning workspace."""
+
+        db = self.pm.get_database(project_id)
+        try:
+            row = db.fetch_one(
+                """SELECT job_id, project_id, article_id, export_format, output_path,
+                          record_count, status, created_at
+                   FROM export_jobs
+                   WHERE project_id = ? AND job_id = ?""",
+                (project_id, job_id),
+            )
+            if not row:
+                raise ValueError("Export job not found")
+            return dict(row)
         finally:
             db.close()
 
     def _export_directory(self, project_id: str, project_dir: Path, output_dir: str | None = None) -> Path:
+        runtime = load_runtime_settings()
+        if runtime.profile != RuntimeProfile.DEVELOPMENT:
+            root = runtime.effective_export_root.expanduser().resolve()
+            requested = Path(output_dir).expanduser().resolve() if output_dir else root
+            if requested != root and root not in requested.parents:
+                raise ValueError("服务器导出目录必须位于 GeoChem 受控导出根目录内。")
+            return requested
         if output_dir:
             return Path(output_dir).expanduser()
         config = load_config()

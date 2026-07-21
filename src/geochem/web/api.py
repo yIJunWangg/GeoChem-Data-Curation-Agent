@@ -3,21 +3,23 @@
 from __future__ import annotations
 
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 from datetime import datetime
 import json
 import os
 from pathlib import Path
 import tempfile
-from typing import Any, Callable
+from typing import Any
 
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from ..core.project import ProjectManager
+from ..core.runtime import RuntimeSettings, load_runtime_settings
 from ..core.config import ModelConfig, ModelPricing, ProviderConfig, TaskModelConfig, load_config, provider_presets, save_config
 from ..core.secrets import parse_secret_ref, resolve_secret, secret_ref_for_provider, store_secret_for_provider
 from ..curation.header_config_importer import HeaderConfigImporter
@@ -29,6 +31,60 @@ from ..workflow import WorkflowRunner
 from ..workbench_service import WorkbenchService
 from ..agent_service import ArticleCurationAgent, RetrievalService
 from ..agent_tools import EntitySelectionInput
+from ..background_tasks import TaskDispatcher
+from ..services.admin_governance import AdminGovernanceService
+from .auth import ApiAuditLogger, AuthenticationMiddleware, GEOCHEM_ROLES
+from .keycloak_admin import KeycloakAdminClient, KeycloakAdminError
+
+
+UPLOAD_CHUNK_BYTES = 1024 * 1024
+
+
+def _safe_upload_name(filename: str | None, fallback: str) -> str:
+    """Keep a human-readable basename without accepting a client-side path."""
+
+    candidate = Path(filename or fallback).name or fallback
+    cleaned = "".join(
+        character if character.isalnum() or character in {".", "-", "_", " "} else "_"
+        for character in candidate
+    ).strip(" .")
+    return (cleaned or fallback)[:180]
+
+
+def _temporary_upload_path(filename: str | None, fallback: str) -> Path:
+    suffix = Path(_safe_upload_name(filename, fallback)).suffix[:16]
+    descriptor, name = tempfile.mkstemp(prefix="geochem-upload-", suffix=suffix)
+    os.close(descriptor)
+    return Path(name)
+
+
+async def _persist_upload(
+    upload: UploadFile,
+    destination: Path,
+    max_upload_mb: int,
+) -> int:
+    """Stream one upload to disk with a strict process-level size limit."""
+
+    maximum = max_upload_mb * 1024 * 1024
+    written = 0
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with destination.open("wb") as handle:
+            while True:
+                chunk = await upload.read(UPLOAD_CHUNK_BYTES)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > maximum:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"上传文件超过服务器限制（{max_upload_mb} MB）。",
+                    )
+                handle.write(chunk)
+        return written
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
 
 
 class SelectionRequest(BaseModel):
@@ -262,6 +318,12 @@ class ExportDirectoryRequest(BaseModel):
     path: str = ""
 
 
+class ExportArticleRequest(BaseModel):
+    project_id: str
+    format: str = "csv"
+    output_dir: str = ""
+
+
 class ChatThreadRequest(BaseModel):
     project_id: str
     article_id: str = ""
@@ -341,85 +403,65 @@ class AgentHandoffRequest(BaseModel):
     project_id: str
 
 
-class TaskManager:
-    """Small persistent thread-backed task runner for one local workspace."""
+class AdminUserCreateRequest(BaseModel):
+    username: str = Field(min_length=2, max_length=80)
+    email: str = ""
+    first_name: str = ""
+    last_name: str = ""
+    enabled: bool = True
+    roles: list[str] = Field(default_factory=lambda: ["viewer"])
+    password: str = ""
+    temporary_password: bool = True
 
-    def __init__(self, pm: ProjectManager):
-        self.pm = pm
-        self.pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="geochem-web")
 
-    def submit(
-        self,
-        project_id: str,
-        article_id: str | None,
-        task_type: str,
-        operation: Callable[[Callable[[str, float, dict[str, Any]], None]], Any],
-    ) -> str:
-        db = self.pm.get_database(project_id)
-        try:
-            active = db.fetch_one(
-                """SELECT task_id FROM workflow_tasks
-                   WHERE project_id = ? AND COALESCE(article_id, '') = COALESCE(?, '')
-                     AND task_type = ? AND status IN ('pending', 'running')
-                   ORDER BY created_at DESC LIMIT 1""",
-                (project_id, article_id, task_type),
-            )
-            if active:
-                return active["task_id"]
-            task_id = self._next_task_id(db)
-            now = datetime.now().isoformat()
-            db.execute(
-                """INSERT INTO workflow_tasks
-                   (task_id, project_id, article_id, task_type, status, progress, message, created_at)
-                   VALUES (?, ?, ?, ?, 'pending', 0, '等待执行', ?)""",
-                (task_id, project_id, article_id, task_type, now),
-            )
-            db.commit()
-        finally:
-            db.close()
-        self.pool.submit(self._run, task_id, project_id, operation)
-        return task_id
+class AdminUserUpdateRequest(BaseModel):
+    username: str | None = None
+    email: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+    enabled: bool | None = None
 
-    def _run(self, task_id: str, project_id: str, operation) -> None:
-        self._update(project_id, task_id, "running", 0.01, "任务已启动")
 
-        def progress(message: str, value: float, details: dict[str, Any] | None = None) -> None:
-            self._update(project_id, task_id, "running", value, message, details or {})
+class AdminRoleUpdateRequest(BaseModel):
+    roles: list[str] = Field(default_factory=list)
 
-        try:
-            result = operation(progress)
-            self._update(project_id, task_id, "completed", 1.0, "任务完成", result=result)
-        except Exception as exc:
-            self._update(project_id, task_id, "failed", 1.0, f"任务失败: {exc}", error=str(exc))
 
-    def _update(
-        self, project_id: str, task_id: str, status: str, progress: float, message: str,
-        details: dict[str, Any] | None = None, result: Any = None, error: str = "",
-    ) -> None:
-        db = self.pm.get_database(project_id)
-        try:
-            now = datetime.now().isoformat()
-            db.execute(
-                """UPDATE workflow_tasks SET status = ?, progress = ?, message = ?,
-                   result_json = ?, error_message = ?, started_at = COALESCE(started_at, ?),
-                   finished_at = CASE WHEN ? IN ('completed','failed') THEN ? ELSE finished_at END
-                   WHERE task_id = ?""",
-                (status, max(0.0, min(1.0, progress)), message, json.dumps(result or {}, ensure_ascii=False), error, now, status, now, task_id),
-            )
-            db.execute(
-                """INSERT INTO workflow_task_events
-                   (task_id, level, message, progress, details_json, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (task_id, "ERROR" if status == "failed" else "INFO", message, progress, json.dumps(details or {}, ensure_ascii=False), now),
-            )
-            db.commit()
-        finally:
-            db.close()
+class AdminPasswordResetRequest(BaseModel):
+    password: str = Field(min_length=10, max_length=256)
+    temporary: bool = True
 
-    def _next_task_id(self, db) -> str:
-        row = db.fetch_one("SELECT task_id FROM workflow_tasks WHERE task_id LIKE 'TASK_%' ORDER BY task_id DESC LIMIT 1")
-        current = int(row["task_id"].split("_")[-1]) if row else 0
-        return f"TASK_{current + 1:07d}"
+
+class AdminCredentialRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    provider: str = Field(min_length=1, max_length=80)
+    api_format: str = "openai"
+    base_url: str = ""
+    model_id: str = Field(min_length=1, max_length=160)
+    api_key: str = ""
+    secret_ref: str = ""
+    enabled: bool = True
+
+
+class AdminCredentialUpdateRequest(BaseModel):
+    name: str | None = None
+    provider: str | None = None
+    api_format: str | None = None
+    base_url: str | None = None
+    model_id: str | None = None
+    api_key: str | None = None
+    secret_ref: str | None = None
+    enabled: bool | None = None
+
+
+class AdminModelAllocationRequest(BaseModel):
+    credential_id: str
+    enabled: bool = True
+    monthly_token_limit: int = Field(default=0, ge=0)
+    monthly_cost_limit: float = Field(default=0.0, ge=0)
+
+
+class AdminStorageQuotaRequest(BaseModel):
+    quota_bytes: int = Field(ge=0)
 
 
 class WebRepository:
@@ -874,21 +916,66 @@ def _test_provider_config(provider: ProviderConfig, api_key: str = "", model_nam
     return {"success": valid, "models": normalized, "provider": provider.name, "model": model_name, "message": "连接测试成功" if valid else "连接测试失败", "last_tested_at": datetime.now().isoformat(timespec="seconds")}
 
 
-def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
-    pm = project_manager or ProjectManager()
+def create_app(
+    project_manager: ProjectManager | None = None,
+    runtime_settings: RuntimeSettings | None = None,
+    keycloak_admin_client: KeycloakAdminClient | None = None,
+) -> FastAPI:
+    runtime = runtime_settings or load_runtime_settings()
+    pm = project_manager or ProjectManager(base_dir=runtime.storage_root)
     service = WorkbenchService(pm)
     workflow = WorkflowRunner(project_manager=pm)
     repo = WebRepository(pm)
-    tasks = TaskManager(pm)
+    tasks = TaskDispatcher(pm, runtime)
     agent = ArticleCurationAgent(pm)
-    app = FastAPI(title="GeoChem Local API", version="1.0.0")
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
-        allow_credentials=False,
-        allow_methods=["*"],
-        allow_headers=["*"],
+    keycloak_admin = keycloak_admin_client or KeycloakAdminClient(runtime)
+    governance = AdminGovernanceService(pm, runtime)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        try:
+            yield
+        finally:
+            tasks.close()
+            agent.close()
+            keycloak_admin.close()
+
+    documentation_urls = (
+        {"docs_url": "/docs", "redoc_url": "/redoc", "openapi_url": "/openapi.json"}
+        if runtime.enable_api_docs
+        else {"docs_url": None, "redoc_url": None, "openapi_url": None}
     )
+    app = FastAPI(
+        title="GeoChem API",
+        version="1.1.0",
+        lifespan=lifespan,
+        **documentation_urls,
+    )
+    app.state.runtime_settings = runtime
+    app.state.task_dispatcher = tasks
+    app.state.keycloak_admin = keycloak_admin
+    if runtime.allowed_hosts:
+        app.add_middleware(TrustedHostMiddleware, allowed_hosts=runtime.allowed_hosts)
+    if runtime.cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=runtime.cors_origins,
+            allow_credentials=runtime.auth_mode == "oidc",
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+    app.add_middleware(
+        AuthenticationMiddleware,
+        settings=runtime,
+        audit_logger=ApiAuditLogger(pm),
+    )
+
+    if not runtime.enable_api_docs:
+        @app.get("/docs", include_in_schema=False)
+        @app.get("/redoc", include_in_schema=False)
+        @app.get("/openapi.json", include_in_schema=False)
+        def disabled_api_documentation():
+            raise HTTPException(status_code=404, detail="API documentation is disabled")
 
     @app.exception_handler(ValueError)
     async def value_error_handler(request, exc):
@@ -896,7 +983,296 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
 
     @app.get("/api/v1/health")
     def health():
-        return {"status": "ok", "time": datetime.now().isoformat()}
+        return {
+            "status": "ok",
+            "profile": runtime.profile.value,
+            "build_id": runtime.build_id or "unversioned",
+            "time": datetime.now().isoformat(),
+        }
+
+    @app.get("/api/v1/ready")
+    def ready():
+        db = pm.get_default_database()
+        try:
+            db.fetch_one("SELECT 1 AS ready")
+        finally:
+            db.close()
+        dependencies = {"database": "ready"}
+        if runtime.task_backend == "celery":
+            try:
+                from redis import Redis
+
+                redis_client = Redis.from_url(runtime.redis_url, socket_connect_timeout=2, socket_timeout=2)
+                redis_client.ping()
+                redis_client.close()
+                dependencies["redis"] = "ready"
+            except Exception as exc:
+                raise HTTPException(503, f"Redis is not ready: {exc}") from exc
+        try:
+            runtime.storage_root.mkdir(parents=True, exist_ok=True)
+            if not os.access(runtime.storage_root, os.W_OK):
+                raise OSError("storage root is not writable")
+            dependencies["storage"] = "ready"
+        except OSError as exc:
+            raise HTTPException(503, f"Storage is not ready: {exc}") from exc
+        return {
+            "status": "ready",
+            "profile": runtime.profile.value,
+            "database": "postgresql" if runtime.database_url else "sqlite",
+            "dependencies": dependencies,
+            "time": datetime.now().isoformat(),
+        }
+
+    @app.get("/api/v1/auth/config")
+    def auth_config():
+        return {
+            "enabled": runtime.auth_mode == "oidc",
+            "issuer_url": runtime.oidc_issuer_url,
+            "client_id": runtime.oidc_client_id,
+            "audience": runtime.oidc_audience,
+            "scopes": runtime.oidc_scopes,
+        }
+
+    @app.get("/api/v1/auth/me")
+    def auth_me(request: Request):
+        user = getattr(request.state, "user", None)
+        if user is None:
+            raise HTTPException(401, "尚未登录。")
+        governance.ensure_user_profile(user.subject, user.username, user.email, user.username)
+        return {**user.public_dict(), "policy": governance.user_policy(user.subject)}
+
+    def actor_id(request: Request) -> str:
+        user = getattr(request.state, "user", None)
+        return str(getattr(user, "subject", "") or "system")
+
+    def storage_owner(request: Request, article_id: str = "") -> str:
+        """Resolve the stable account charged for a project upload."""
+
+        return governance.article_storage_owner(article_id, actor_id(request))
+
+    def require_storage_capacity(user_id: str, incoming_bytes: int) -> None:
+        try:
+            governance.ensure_storage_available(user_id, incoming_bytes)
+        except ValueError as exc:
+            raise HTTPException(status_code=413, detail=str(exc)) from exc
+
+    def register_imported_storage(
+        user_id: str,
+        project_id: str,
+        result,
+        object_type: str = "article_source",
+    ) -> None:
+        governance.register_storage_object(
+            user_id,
+            project_id,
+            str(result.article_id or ""),
+            object_type,
+            str(result.local_path or ""),
+            int(result.file_size or 0),
+            str(result.file_hash or ""),
+        )
+
+    def require_user_admin() -> KeycloakAdminClient:
+        if runtime.auth_mode != "oidc":
+            raise HTTPException(
+                409,
+                "本地开发模式未启用身份服务；请在局域网生产配置中使用 Keycloak 管理真实账号。",
+            )
+        if not keycloak_admin.available:
+            raise HTTPException(503, "Keycloak 用户管理服务账号尚未配置。")
+        return keycloak_admin
+
+    def call_user_admin(operation):
+        try:
+            return operation()
+        except KeycloakAdminError as exc:
+            raise HTTPException(502, str(exc)) from exc
+
+    @app.get("/api/v1/admin/status")
+    def admin_status():
+        return {
+            "profile": runtime.profile.value,
+            "build_id": runtime.build_id or "unversioned",
+            "auth_mode": runtime.auth_mode,
+            "database": "postgresql" if runtime.database_url else "sqlite",
+            "task_backend": runtime.task_backend,
+            "credential_vault_ready": governance.vault.available,
+            "user_management": {
+                "mode": "keycloak" if runtime.auth_mode == "oidc" else "local-preview",
+                "available": keycloak_admin.available if runtime.auth_mode == "oidc" else False,
+                "realm": runtime.keycloak_realm if runtime.auth_mode == "oidc" else "",
+                "message": (
+                    "Keycloak 用户与角色管理已连接。"
+                    if keycloak_admin.available
+                    else "本地开发预览未启用登录；生产部署后在此管理真实账号。"
+                ),
+            },
+        }
+
+    @app.get("/api/v1/admin/users")
+    def admin_users(q: str = "", first: int = 0, limit: int = 100):
+        if runtime.auth_mode != "oidc":
+            governance.ensure_user_profile("local-development", "Local Developer")
+            return {
+                "users": [{
+                    "id": "local-development",
+                    "username": "Local Developer",
+                    "email": "",
+                    "first_name": "Local",
+                    "last_name": "Developer",
+                    "enabled": True,
+                    "email_verified": False,
+                    "created_at": 0,
+                    "roles": sorted(GEOCHEM_ROLES),
+                }],
+                "total": 1,
+                "first": 0,
+                "limit": limit,
+                "preview": True,
+            }
+        client = require_user_admin()
+        result = call_user_admin(lambda: client.list_users(q, first, limit))
+        for item in result.get("users", []):
+            governance.ensure_user_profile(
+                str(item.get("id") or ""),
+                str(item.get("username") or ""),
+                str(item.get("email") or ""),
+                " ".join(
+                    part for part in (
+                        str(item.get("first_name") or "").strip(),
+                        str(item.get("last_name") or "").strip(),
+                    ) if part
+                ),
+            )
+        return result
+
+    @app.get("/api/v1/admin/overview")
+    def admin_overview():
+        result = governance.overview()
+        if runtime.auth_mode == "oidc" and keycloak_admin.available:
+            users = call_user_admin(lambda: keycloak_admin.list_users("", 0, 1000))
+            result["users_total"] = int(users.get("total") or len(users.get("users", [])))
+            result["users_enabled"] = sum(1 for item in users.get("users", []) if item.get("enabled"))
+        else:
+            result["users_total"] = 1
+            result["users_enabled"] = 1
+        return result
+
+    @app.get("/api/v1/admin/model-credentials")
+    def admin_model_credentials():
+        return {
+            "vault_ready": governance.vault.available,
+            "credentials": governance.list_credentials(),
+        }
+
+    @app.post("/api/v1/admin/model-credentials")
+    def create_admin_model_credential(payload: AdminCredentialRequest, request: Request):
+        return governance.create_credential(payload.model_dump(), actor_id(request))
+
+    @app.patch("/api/v1/admin/model-credentials/{credential_id}")
+    def update_admin_model_credential(
+        credential_id: str,
+        payload: AdminCredentialUpdateRequest,
+        request: Request,
+    ):
+        return governance.update_credential(
+            credential_id,
+            payload.model_dump(exclude_none=True),
+            actor_id(request),
+        )
+
+    @app.delete("/api/v1/admin/model-credentials/{credential_id}")
+    def delete_admin_model_credential(credential_id: str):
+        governance.delete_credential(credential_id)
+        return {"status": "deleted", "credential_id": credential_id}
+
+    @app.get("/api/v1/admin/users/{user_id}/policy")
+    def admin_user_policy(user_id: str):
+        return governance.user_policy(user_id)
+
+    @app.put("/api/v1/admin/users/{user_id}/model-allocation")
+    def update_admin_model_allocation(
+        user_id: str,
+        payload: AdminModelAllocationRequest,
+        request: Request,
+    ):
+        return governance.set_model_allocation(
+            user_id,
+            payload.credential_id,
+            payload.enabled,
+            payload.monthly_token_limit,
+            payload.monthly_cost_limit,
+            actor_id(request),
+        )
+
+    @app.put("/api/v1/admin/users/{user_id}/storage-quota")
+    def update_admin_storage_quota(
+        user_id: str,
+        payload: AdminStorageQuotaRequest,
+        request: Request,
+    ):
+        return governance.set_storage_quota(user_id, payload.quota_bytes, actor_id(request))
+
+    @app.get("/api/v1/admin/tasks")
+    def admin_tasks(limit: int = Query(default=200, ge=1, le=1000)):
+        return {"tasks": governance.tasks(limit)}
+
+    @app.get("/api/v1/admin/audit-events")
+    def admin_audit_events(
+        limit: int = Query(default=200, ge=1, le=1000),
+        user_id: str = "",
+    ):
+        return {"events": governance.audit_events(limit, user_id)}
+
+    @app.get("/api/v1/me/usage")
+    def my_usage(request: Request):
+        user = getattr(request.state, "user", None)
+        if user is None:
+            raise HTTPException(401, "尚未登录。")
+        return governance.user_policy(user.subject)
+
+    @app.post("/api/v1/admin/users")
+    def create_admin_user(request: AdminUserCreateRequest):
+        client = require_user_admin()
+        return call_user_admin(lambda: client.create_user(
+            username=request.username.strip(),
+            email=request.email.strip(),
+            first_name=request.first_name.strip(),
+            last_name=request.last_name.strip(),
+            enabled=request.enabled,
+            roles=request.roles,
+            password=request.password,
+            temporary_password=request.temporary_password,
+        ))
+
+    @app.patch("/api/v1/admin/users/{user_id}")
+    def update_admin_user(user_id: str, request: AdminUserUpdateRequest):
+        client = require_user_admin()
+        values = request.model_dump(exclude_none=True)
+        return call_user_admin(lambda: client.update_user(user_id, values))
+
+    @app.put("/api/v1/admin/users/{user_id}/roles")
+    def update_admin_user_roles(user_id: str, request: AdminRoleUpdateRequest):
+        client = require_user_admin()
+        return call_user_admin(lambda: client.replace_roles(user_id, request.roles))
+
+    @app.post("/api/v1/admin/users/{user_id}/reset-password")
+    def reset_admin_user_password(user_id: str, request: AdminPasswordResetRequest):
+        client = require_user_admin()
+        call_user_admin(lambda: client.reset_password(user_id, request.password, request.temporary))
+        return {"status": "password_reset", "user_id": user_id, "temporary": request.temporary}
+
+    @app.post("/api/v1/admin/users/{user_id}/logout")
+    def logout_admin_user(user_id: str):
+        client = require_user_admin()
+        call_user_admin(lambda: client.logout_user(user_id))
+        return {"status": "sessions_revoked", "user_id": user_id}
+
+    @app.delete("/api/v1/admin/users/{user_id}")
+    def delete_admin_user(user_id: str):
+        client = require_user_admin()
+        call_user_admin(lambda: client.delete_user(user_id))
+        return {"status": "deleted", "user_id": user_id}
 
     @app.get("/api/v1/chat/threads")
     def chat_threads(project_id: str, article_id: str = ""):
@@ -1004,20 +1380,28 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
         return OpenAccessResolver(pm).confirm(request.project_id, source_id)
 
     @app.post("/api/v1/chat/threads/{thread_id}/upload")
-    async def upload_chat_article(thread_id: str, project_id: str, file: UploadFile = File(...)):
+    async def upload_chat_article(
+        thread_id: str,
+        request: Request,
+        project_id: str,
+        file: UploadFile = File(...),
+    ):
         _config, project_dir = pm.load_project(project_id)
         # Preserve the user-visible filename in the article source folder; a
         # NamedTemporaryFile would otherwise turn `main.pdf` into `tmpXXXX.pdf`.
-        safe_name = Path(file.filename or "article.pdf").name or "article.pdf"
+        safe_name = _safe_upload_name(file.filename, "article.pdf")
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir) / safe_name
-            temp_path.write_bytes(await file.read())
+            written = await _persist_upload(file, temp_path, runtime.max_upload_mb)
+            owner_id = storage_owner(request)
+            require_storage_capacity(owner_id, written)
             db = pm.get_database(project_id)
             try:
                 result = FileImporter().import_file(db, project_dir, temp_path)
                 db.commit()
             finally:
                 db.close()
+        register_imported_storage(owner_id, project_id, result)
         selected = agent.select_chat_entity(
             project_id,
             thread_id,
@@ -1155,12 +1539,17 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
         return repo.header_configs(project_id)
 
     @app.post("/api/v1/header-configs/import")
-    async def import_header_config(project_id: str, name: str = "", file: UploadFile = File(...)):
+    async def import_header_config(
+        request: Request,
+        project_id: str,
+        name: str = "",
+        file: UploadFile = File(...),
+    ):
         _config, project_dir = pm.load_project(project_id)
-        suffix = Path(file.filename or "headers.csv").suffix
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as handle:
-            handle.write(await file.read())
-            temp_path = Path(handle.name)
+        temp_path = _temporary_upload_path(file.filename, "headers.csv")
+        written = await _persist_upload(file, temp_path, runtime.max_upload_mb)
+        owner_id = storage_owner(request)
+        require_storage_capacity(owner_id, written)
         try:
             source_headers, _samples = HeaderConfigImporter().read_headers(temp_path)
             if not source_headers:
@@ -1199,6 +1588,14 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
                 db.close()
             backup = project_dir / "headers" / f"{config_id}.json"
             backup.write_text(json.dumps({"config_id": config_id, "name": name, "headers": rows}, ensure_ascii=False, indent=2), encoding="utf-8")
+            governance.register_storage_object(
+                owner_id,
+                project_id,
+                "",
+                "header_config",
+                str(backup.relative_to(project_dir)),
+                backup.stat().st_size,
+            )
             return {"config_id": config_id, "field_count": len(rows), "headers": rows}
         finally:
             temp_path.unlink(missing_ok=True)
@@ -1230,45 +1627,58 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
     def confirm_access(request: ConfirmAccessRequest):
         task_id = tasks.submit(
             request.project_id, request.article_id, "confirm_access",
-            lambda progress: workflow.confirm_browser_access(request.project_id, request.article_id, request.url),
+            "confirm_access", {"url": request.url},
         )
         return {"task_id": task_id}
 
     @app.post("/api/v1/articles/{article_id}/upload")
-    async def upload_file(article_id: str, project_id: str, file: UploadFile = File(...)):
+    async def upload_file(
+        article_id: str,
+        request: Request,
+        project_id: str,
+        file: UploadFile = File(...),
+    ):
         _config, project_dir = pm.load_project(project_id)
-        suffix = Path(file.filename or "upload.bin").suffix
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as handle:
-            handle.write(await file.read())
-            temp_path = Path(handle.name)
+        temp_path = _temporary_upload_path(file.filename, "upload.bin")
+        written = await _persist_upload(file, temp_path, runtime.max_upload_mb)
+        owner_id = storage_owner(request, article_id)
+        require_storage_capacity(owner_id, written)
         db = pm.get_database(project_id)
         try:
             result = FileImporter().import_file(db, project_dir, temp_path, article_id=article_id)
-            return result.__dict__
+            db.commit()
         finally:
             db.close()
             temp_path.unlink(missing_ok=True)
+        register_imported_storage(owner_id, project_id, result)
+        return result.__dict__
 
     @app.post("/api/v1/import/file")
-    async def import_new_article_file(project_id: str, file: UploadFile = File(...)):
+    async def import_new_article_file(
+        request: Request,
+        project_id: str,
+        file: UploadFile = File(...),
+    ):
         _config, project_dir = pm.load_project(project_id)
-        suffix = Path(file.filename or "article.pdf").suffix
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as handle:
-            handle.write(await file.read())
-            temp_path = Path(handle.name)
+        temp_path = _temporary_upload_path(file.filename, "article.pdf")
+        written = await _persist_upload(file, temp_path, runtime.max_upload_mb)
+        owner_id = storage_owner(request)
+        require_storage_capacity(owner_id, written)
         db = pm.get_database(project_id)
         try:
             result = FileImporter().import_file(db, project_dir, temp_path, article_id=None)
-            return {
-                "article_id": result.article_id,
-                "resource_id": result.resource_id,
-                "resource_type": result.resource_type.value if result.resource_type else "",
-                "file_name": result.file_name,
-                "status": result.status,
-            }
+            db.commit()
         finally:
             db.close()
             temp_path.unlink(missing_ok=True)
+        register_imported_storage(owner_id, project_id, result)
+        return {
+            "article_id": result.article_id,
+            "resource_id": result.resource_id,
+            "resource_type": result.resource_type.value if result.resource_type else "",
+            "file_name": result.file_name,
+            "status": result.status,
+        }
 
     @app.get("/api/v1/articles/{article_id}/session")
     def get_session(article_id: str, project_id: str):
@@ -1278,7 +1688,7 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
     def discover(article_id: str, project_id: str):
         task_id = tasks.submit(
             project_id, article_id, "resource_discovery",
-            lambda progress: service.discover_article(project_id, article_id, progress),
+            "resource_discovery",
         )
         return {"task_id": task_id}
 
@@ -1286,7 +1696,7 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
     def rediscover_with_rules(article_id: str, project_id: str):
         task_id = tasks.submit(
             project_id, article_id, "resource_discovery",
-            lambda progress: service.discover_article(project_id, article_id, progress),
+            "resource_discovery",
         )
         return {"task_id": task_id}
 
@@ -1322,7 +1732,7 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
     def header_mapping_benchmark(project_id: str):
         task_id = tasks.submit(
             project_id, None, "header_mapping_benchmark",
-            lambda progress: service.header_mapping_benchmark(project_id, progress),
+            "header_mapping_benchmark",
         )
         return {"task_id": task_id}
 
@@ -1338,7 +1748,7 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
     def standardize_tables(article_id: str, request: TableStandardizeRequest):
         task_id = tasks.submit(
             request.project_id, article_id, "table_standardization",
-            lambda progress: service.standardize_tables(request.project_id, article_id, request.use_llm, progress),
+            "table_standardization", {"use_llm": request.use_llm},
         )
         return {"task_id": task_id}
 
@@ -1366,8 +1776,25 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
     def resources(article_id: str, project_id: str):
         return repo.resources(project_id, article_id)
 
-    def resolve_resource_file(project_id: str, resource_id: str) -> Path:
+    def resolve_managed_project_file(
+        project_id: str,
+        stored_path: str,
+        *,
+        missing_detail: str,
+    ) -> Path:
+        """Resolve one database path without allowing reads outside its workspace."""
+
         _config, project_dir = pm.load_project(project_id)
+        project_root = project_dir.expanduser().resolve()
+        raw_path = Path(stored_path or "").expanduser()
+        path = (raw_path if raw_path.is_absolute() else project_root / raw_path).resolve()
+        if path != project_root and project_root not in path.parents:
+            raise HTTPException(403, "Resource path is outside the managed project directory")
+        if not path.is_file():
+            raise HTTPException(404, missing_detail)
+        return path
+
+    def resolve_resource_file(project_id: str, resource_id: str) -> Path:
         db = pm.get_database(project_id)
         try:
             row = db.fetch_one(
@@ -1376,11 +1803,11 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
             )
             if not row:
                 raise HTTPException(404, "Resource not found")
-            path = Path(row["local_path"] or "")
-            path = path if path.is_absolute() else project_dir / path
-            if not path.exists():
-                raise HTTPException(404, "Resource file missing")
-            return path
+            return resolve_managed_project_file(
+                project_id,
+                str(row["local_path"] or ""),
+                missing_detail="Resource file missing",
+            )
         finally:
             db.close()
 
@@ -1398,9 +1825,11 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
             row = db.fetch_one("SELECT preview_path FROM document_elements WHERE project_id=? AND element_id=?", (project_id, element_id))
             if not row or not row["preview_path"]:
                 raise HTTPException(404, "Preview not found")
-            path = Path(row["preview_path"])
-            if not path.exists():
-                raise HTTPException(404, "Preview file missing")
+            path = resolve_managed_project_file(
+                project_id,
+                str(row["preview_path"]),
+                missing_detail="Preview file missing",
+            )
             return FileResponse(path)
         finally:
             db.close()
@@ -1439,7 +1868,7 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
     def create_batch(request: ExtractionRequest):
         task_id = tasks.submit(
             request.project_id, request.article_id, "candidate_extraction",
-            lambda progress: service.create_extraction_batch(request.project_id, request.article_id, request.use_llm, progress),
+            "candidate_extraction", {"use_llm": request.use_llm},
         )
         return {"task_id": task_id}
 
@@ -1447,7 +1876,7 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
     def extract_tables(article_id: str, request: ExtractionRequest):
         task_id = tasks.submit(
             request.project_id, article_id, "table_extraction",
-            lambda progress: service.extract_tables(request.project_id, article_id, request.use_llm, progress),
+            "table_extraction", {"use_llm": request.use_llm},
         )
         return {"task_id": task_id}
 
@@ -1455,7 +1884,8 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
     def extract_paragraphs(article_id: str, request: ParagraphExtractionRequest):
         task_id = tasks.submit(
             request.project_id, article_id, "paragraph_extraction",
-            lambda progress: service.extract_paragraphs(request.project_id, article_id, request.element_ids, request.use_llm, progress),
+            "paragraph_extraction",
+            {"element_ids": request.element_ids, "use_llm": request.use_llm},
         )
         return {"task_id": task_id}
 
@@ -1483,7 +1913,8 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
     def reextract_element(article_id: str, element_id: str, request: ParagraphExtractionRequest):
         task_id = tasks.submit(
             request.project_id, article_id, "element_reextract",
-            lambda progress: service.reextract_element(request.project_id, article_id, element_id, request.use_llm, progress),
+            "element_reextract",
+            {"element_id": element_id, "use_llm": request.use_llm},
         )
         return {"task_id": task_id}
 
@@ -1598,8 +2029,51 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
         return service.article_trace(project_id, article_id)
 
     @app.get("/api/v1/articles/{article_id}/export")
-    def export_article(article_id: str, project_id: str, format: str = "csv", output_dir: str | None = None):
+    def export_article_legacy(article_id: str, project_id: str, format: str = "csv", output_dir: str | None = None):
+        """Compatibility endpoint; new clients use the audited POST variant."""
+
         return service.export_article(project_id, article_id, format, output_dir)
+
+    @app.post("/api/v1/articles/{article_id}/export")
+    def export_article(article_id: str, request: ExportArticleRequest):
+        return service.export_article(
+            request.project_id,
+            article_id,
+            request.format,
+            request.output_dir or None,
+        )
+
+    @app.get("/api/v1/export-jobs")
+    def export_jobs(
+        project_id: str,
+        article_id: str | None = None,
+        limit: int = Query(default=50, ge=1, le=200),
+    ):
+        return service.export_jobs(project_id, article_id, limit)
+
+    @app.get("/api/v1/export-jobs/{job_id}/download")
+    def download_export(job_id: str, project_id: str):
+        try:
+            job = service.export_job(project_id, job_id)
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        if job.get("status") != "completed":
+            raise HTTPException(409, "导出任务尚未完成，当前文件不可下载。")
+        path = Path(str(job.get("output_path") or "")).expanduser().resolve()
+        if runtime.profile.value != "development":
+            root = runtime.effective_export_root.expanduser().resolve()
+            if path != root and root not in path.parents:
+                raise HTTPException(403, "导出文件不在服务器受管目录内。")
+        if not path.is_file():
+            raise HTTPException(404, "导出文件已不存在，请重新生成。")
+        media_types = {
+            ".csv": "text/csv; charset=utf-8",
+            ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        }
+        media_type = media_types.get(path.suffix.lower())
+        if media_type is None:
+            raise HTTPException(415, "该导出文件格式不允许通过浏览器下载。")
+        return FileResponse(path, media_type=media_type, filename=path.name)
 
     @app.get("/api/v1/reviews")
     def reviews(project_id: str):
@@ -1705,7 +2179,11 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
             "default_model": default.model if default else "",
             "vision_provider": vision.provider if vision else "",
             "vision_model": vision.model if vision else "",
-            "export_dir": config.ui_preferences.get("export_dir", ""),
+            "export_dir": (
+                str(runtime.effective_export_root)
+                if runtime.profile.value != "development"
+                else config.ui_preferences.get("export_dir", "")
+            ),
             "task_models": {
                 name: {
                     "provider": task.provider,
@@ -1831,6 +2309,12 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
 
     @app.get("/api/v1/export-directory")
     def export_directory(project_id: str):
+        if runtime.profile.value != "development":
+            return {
+                "path": str(runtime.effective_export_root),
+                "is_default": True,
+                "managed": True,
+            }
         config = load_config()
         configured = config.ui_preferences.get("export_dir", "") if config.ui_preferences else ""
         if configured:
@@ -1844,6 +2328,12 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
 
     @app.put("/api/v1/export-directory")
     def update_export_directory(request: ExportDirectoryRequest):
+        if runtime.profile.value != "development":
+            requested = Path(request.path).expanduser().resolve() if request.path.strip() else runtime.effective_export_root.resolve()
+            root = runtime.effective_export_root.expanduser().resolve()
+            if requested != root:
+                raise HTTPException(409, "服务器导出目录由管理员统一配置，浏览器不能修改。")
+            return {"path": str(root), "status": "managed"}
         config = load_config()
         config.ui_preferences = dict(config.ui_preferences or {})
         if request.path.strip():
@@ -1855,6 +2345,8 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
 
     @app.post("/api/v1/export-directory/open")
     def open_export_directory(project_id: str, request: ExportDirectoryRequest):
+        if runtime.profile.value != "development":
+            raise HTTPException(409, "服务器目录不能从浏览器直接打开，请通过导出记录下载文件。")
         path_text = request.path.strip()
         if not path_text:
             _project_config, project_dir = pm.load_project(project_id)
@@ -1914,7 +2406,14 @@ def create_app(project_manager: ProjectManager | None = None) -> FastAPI:
                 await asyncio.sleep(0.35)
         return StreamingResponse(stream(), media_type="text/event-stream")
 
-    web_dist = Path(__file__).resolve().parents[3] / "web" / "dist"
+    # Source checkouts keep the Vite bundle under ``web/dist`` while the
+    # production image copies it to a stable, read-only application path.
+    web_dist = Path(
+        os.environ.get(
+            "GEOCHEM_WEB_DIST",
+            str(Path(__file__).resolve().parents[3] / "web" / "dist"),
+        )
+    ).expanduser()
     if web_dist.exists():
         app.mount("/assets", StaticFiles(directory=web_dist / "assets"), name="web-assets")
 

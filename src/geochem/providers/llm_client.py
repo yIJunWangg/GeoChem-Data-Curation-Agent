@@ -14,7 +14,14 @@ from ..core.database import Database
 from ..core.exceptions import LLMError, ProviderNotFoundError
 from ..core.logging_config import get_logger
 from ..core.models import LLMCallRecord, LLMResponse
+from ..core.runtime import load_runtime_settings
 from ..core.secrets import resolve_secret
+from ..services.execution_context import current_user_id
+from ..services.model_access import (
+    UserModelGrant,
+    record_user_model_usage,
+    resolve_user_model_grant,
+)
 from .anthropic_provider import AnthropicProvider
 from .google_provider import GoogleProvider
 from .ollama_provider import OllamaProvider
@@ -133,6 +140,40 @@ class LLMClient:
             return self.config.task_models["_default"]
         return TaskModelConfig(provider="anthropic", model="claude-sonnet-4-20250514")
 
+    @staticmethod
+    def _provider_for_grant(grant: UserModelGrant):
+        """Build an isolated provider instance for one administrator grant."""
+
+        provider_class = AnthropicProvider if grant.api_format == "anthropic" else OpenAIProvider
+        provider = provider_class(api_key=grant.api_key, base_url=grant.base_url or None)
+        provider.name = grant.provider
+        provider.display_name = grant.provider
+        return provider
+
+    def _estimate_cost(
+        self,
+        provider_name: str,
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+        cached_tokens: int,
+    ) -> float:
+        """Estimate one call from the configured per-1K-token price table."""
+
+        provider = self.config.get_provider(provider_name)
+        if not provider:
+            return 0.0
+        model_config = next((item for item in provider.models if item.name == model), None)
+        if not model_config:
+            return 0.0
+        pricing = model_config.pricing
+        uncached_input = max(0, int(input_tokens) - max(0, int(cached_tokens or 0)))
+        return (
+            uncached_input * float(pricing.input_price or 0.0)
+            + max(0, int(cached_tokens or 0)) * float(pricing.cached_input_price or 0.0)
+            + max(0, int(output_tokens)) * float(pricing.output_price or 0.0)
+        ) / 1000.0
+
     def chat(
         self,
         messages: list[dict[str, Any]],
@@ -169,25 +210,57 @@ class LLMClient:
         temperature = temperature_override if temperature_override is not None else task_config.temperature
         max_tokens = max_tokens_override or task_config.max_tokens
 
+        runtime = load_runtime_settings()
+        execution_user = current_user_id()
+        managed_grant: UserModelGrant | None = None
+        managed_provider = None
+        if runtime.auth_mode == "oidc":
+            if not execution_user:
+                raise LLMError("当前模型调用缺少已认证用户上下文，请重新登录后重试。")
+            if not self.db:
+                raise LLMError("当前模型调用无法读取管理员分配策略，请联系管理员。")
+            try:
+                managed_grant = resolve_user_model_grant(
+                    self.db,
+                    runtime,
+                    execution_user,
+                    preferred_provider=provider_name,
+                    preferred_model=model,
+                )
+            except ValueError as exc:
+                raise LLMError(str(exc)) from exc
+            provider_name = managed_grant.provider
+            model = managed_grant.model_id
+            managed_provider = self._provider_for_grant(managed_grant)
+
         # Check cache
-        prompt_hash = self._compute_prompt_hash(messages, model)
+        cache_scope = (
+            f"{model}:{managed_grant.credential_id}:{execution_user}"
+            if managed_grant
+            else model
+        )
+        prompt_hash = self._compute_prompt_hash(messages, cache_scope)
         if use_cache and prompt_hash in self._cache:
             logger.debug(f"Cache hit for prompt hash {prompt_hash}")
             return self._cache[prompt_hash]
 
         # Build fallback chain: try requested provider first, then fallbacks
         providers_to_try = [(provider_name, model)]
-        for fb in self.config.fallback_chain:
-            pair = (fb["provider"], fb["model"])
-            if pair not in providers_to_try:
-                providers_to_try.append(pair)
+        if not managed_grant:
+            for fb in self.config.fallback_chain:
+                pair = (fb["provider"], fb["model"])
+                if pair not in providers_to_try:
+                    providers_to_try.append(pair)
 
         last_error = None
         for prov_name, mdl in providers_to_try:
-            try:
-                provider = self.registry.get(prov_name)
-            except ProviderNotFoundError:
-                continue
+            if managed_grant:
+                provider = managed_provider
+            else:
+                try:
+                    provider = self.registry.get(prov_name)
+                except ProviderNotFoundError:
+                    continue
 
             # Retry loop for rate limit errors
             max_retries = 3
@@ -221,6 +294,13 @@ class LLMClient:
                         else "final_output" if final_content
                         else "empty_output"
                     )
+                    estimated_cost = self._estimate_cost(
+                        prov_name,
+                        mdl,
+                        response.input_tokens,
+                        response.output_tokens,
+                        int(response.cached_tokens or 0),
+                    )
 
                     # Track the call
                     call_record = LLMCallRecord(
@@ -236,6 +316,7 @@ class LLMClient:
                         output_tokens=response.output_tokens,
                         cached_tokens=response.cached_tokens,
                         total_tokens=response.total_tokens,
+                        estimated_cost=estimated_cost,
                         started_at=datetime.fromtimestamp(start_time),
                         ended_at=datetime.now(),
                         latency_ms=response.latency_ms,
@@ -248,6 +329,16 @@ class LLMClient:
                         structured_status=structured_status,
                     )
                     self._record_call(call_record)
+                    if managed_grant and self.db:
+                        record_user_model_usage(
+                            self.db,
+                            execution_user,
+                            managed_grant,
+                            response.input_tokens,
+                            response.output_tokens,
+                            response.total_tokens,
+                            estimated_cost,
+                        )
 
                     # Cache the response
                     if use_cache:

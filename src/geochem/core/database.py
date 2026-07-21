@@ -2,8 +2,17 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
+from threading import Lock
+from typing import Any
+
+from .database_backend import PostgresConnection, postgres_schema_statements
+
+
+_POSTGRES_INITIALIZED: set[str] = set()
+_POSTGRES_INITIALIZE_LOCK = Lock()
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -28,6 +37,7 @@ CREATE TABLE IF NOT EXISTS articles (
     url        TEXT,
     journal    TEXT DEFAULT '',
     article_dir TEXT DEFAULT '',
+    owner_user_id TEXT DEFAULT '',
     status     TEXT DEFAULT 'imported',
     created_at TEXT NOT NULL,
     FOREIGN KEY (project_id) REFERENCES projects(project_id)
@@ -547,6 +557,11 @@ CREATE TABLE IF NOT EXISTS workflow_tasks (
     status        TEXT DEFAULT 'pending',
     progress      REAL DEFAULT 0.0,
     message       TEXT DEFAULT '',
+    operation_name TEXT DEFAULT '',
+    payload_json  TEXT DEFAULT '{}',
+    task_key      TEXT DEFAULT '',
+    broker_task_id TEXT DEFAULT '',
+    retry_count   INTEGER DEFAULT 0,
     result_json   TEXT DEFAULT '{}',
     error_message TEXT DEFAULT '',
     created_at    TEXT NOT NULL,
@@ -808,6 +823,81 @@ CREATE TABLE IF NOT EXISTS processing_events (
     FOREIGN KEY (project_id) REFERENCES projects(project_id)
 );
 
+CREATE TABLE IF NOT EXISTS user_profiles (
+    user_id TEXT PRIMARY KEY,
+    username TEXT NOT NULL DEFAULT '',
+    display_name TEXT DEFAULT '',
+    email TEXT DEFAULT '',
+    status TEXT DEFAULT 'active',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS model_credentials (
+    credential_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    api_format TEXT DEFAULT 'openai',
+    base_url TEXT DEFAULT '',
+    model_id TEXT NOT NULL,
+    secret_ref TEXT DEFAULT '',
+    encrypted_secret TEXT DEFAULT '',
+    secret_nonce TEXT DEFAULT '',
+    key_fingerprint TEXT DEFAULT '',
+    enabled INTEGER DEFAULT 1,
+    created_by TEXT DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS user_model_allocations (
+    allocation_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    credential_id TEXT NOT NULL,
+    enabled INTEGER DEFAULT 1,
+    monthly_token_limit INTEGER DEFAULT 0,
+    monthly_cost_limit REAL DEFAULT 0.0,
+    created_by TEXT DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(user_id, credential_id),
+    FOREIGN KEY (credential_id) REFERENCES model_credentials(credential_id)
+);
+
+CREATE TABLE IF NOT EXISTS user_storage_quotas (
+    user_id TEXT PRIMARY KEY,
+    quota_bytes INTEGER NOT NULL DEFAULT 10737418240,
+    used_bytes INTEGER NOT NULL DEFAULT 0,
+    updated_by TEXT DEFAULT '',
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS storage_objects (
+    object_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    project_id TEXT DEFAULT '',
+    article_id TEXT DEFAULT '',
+    object_type TEXT NOT NULL,
+    relative_path TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL DEFAULT 0,
+    checksum TEXT DEFAULT '',
+    created_at TEXT NOT NULL,
+    UNIQUE(relative_path)
+);
+
+CREATE TABLE IF NOT EXISTS user_ai_usage_monthly (
+    usage_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    credential_id TEXT DEFAULT '',
+    usage_month TEXT NOT NULL,
+    input_tokens INTEGER DEFAULT 0,
+    output_tokens INTEGER DEFAULT 0,
+    total_tokens INTEGER DEFAULT 0,
+    estimated_cost REAL DEFAULT 0.0,
+    updated_at TEXT NOT NULL,
+    UNIQUE(user_id, credential_id, usage_month)
+);
+
 CREATE INDEX IF NOT EXISTS idx_articles_project ON articles(project_id);
 CREATE INDEX IF NOT EXISTS idx_resources_article ON resources(article_id);
 CREATE INDEX IF NOT EXISTS idx_article_evidence_article ON article_evidence(article_id);
@@ -828,6 +918,10 @@ CREATE INDEX IF NOT EXISTS idx_llm_calls_project ON llm_calls(project_id);
 CREATE INDEX IF NOT EXISTS idx_llm_calls_article ON llm_calls(article_id);
 CREATE INDEX IF NOT EXISTS idx_header_mapping_benchmarks_project ON header_mapping_benchmarks(project_id);
 CREATE INDEX IF NOT EXISTS idx_processing_events_project ON processing_events(project_id);
+CREATE INDEX IF NOT EXISTS idx_model_credentials_provider ON model_credentials(provider, enabled);
+CREATE INDEX IF NOT EXISTS idx_user_model_allocations_user ON user_model_allocations(user_id, enabled);
+CREATE INDEX IF NOT EXISTS idx_storage_objects_user ON storage_objects(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_user_ai_usage_month ON user_ai_usage_monthly(usage_month, user_id);
 CREATE INDEX IF NOT EXISTS idx_teaching_events_project ON teaching_events(project_id);
 CREATE INDEX IF NOT EXISTS idx_learned_rules_project ON learned_extraction_rules(project_id);
 CREATE INDEX IF NOT EXISTS idx_record_patches_table ON record_patches(table_id);
@@ -844,6 +938,22 @@ CREATE INDEX IF NOT EXISTS idx_workflow_task_events_task ON workflow_task_events
 CREATE INDEX IF NOT EXISTS idx_chat_threads_scope ON chat_threads(project_id, article_id, updated_at);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_thread ON chat_messages(thread_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_chat_citations_message ON chat_citations(message_id);
+CREATE TABLE IF NOT EXISTS api_audit_events (
+    audit_id TEXT PRIMARY KEY,
+    project_id TEXT DEFAULT '',
+    user_id TEXT DEFAULT '',
+    username TEXT DEFAULT '',
+    roles_json TEXT DEFAULT '[]',
+    request_id TEXT NOT NULL,
+    method TEXT NOT NULL,
+    path TEXT NOT NULL,
+    status_code INTEGER NOT NULL,
+    client_ip TEXT DEFAULT '',
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_audit_created ON api_audit_events(created_at);
+CREATE INDEX IF NOT EXISTS idx_api_audit_user ON api_audit_events(user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_article ON agent_runs(project_id, article_id, status);
 CREATE INDEX IF NOT EXISTS idx_article_source_candidates_project ON article_source_candidates(project_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_agent_interrupts_run ON agent_interrupts(run_id, status);
@@ -855,13 +965,18 @@ CREATE INDEX IF NOT EXISTS idx_retrieval_documents_scope ON retrieval_documents(
 
 
 class Database:
-    """SQLite database access layer."""
+    """SQLite/PostgreSQL database access layer with a stable query API."""
 
-    def __init__(self, db_path: str | Path):
+    def __init__(self, db_path: str | Path, database_url: str = ""):
         self.db_path = Path(db_path)
+        self.database_url = database_url
+        self.dialect = "postgresql" if database_url.startswith(("postgresql://", "postgresql+psycopg://")) else "sqlite"
         self._conn: sqlite3.Connection | None = None
+        self._postgres: PostgresConnection | None = PostgresConnection(database_url) if self.dialect == "postgresql" else None
 
-    def connect(self) -> sqlite3.Connection:
+    def connect(self):
+        if self._postgres:
+            return self._postgres.connect()
         if self._conn is None:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
             self._conn = sqlite3.connect(str(self.db_path), timeout=30)
@@ -872,18 +987,70 @@ class Database:
         return self._conn
 
     def close(self) -> None:
+        if self._postgres:
+            self._postgres.close()
+            return
         if self._conn:
             self._conn.close()
             self._conn = None
 
     def initialize(self) -> None:
         """Create all tables if they don't exist."""
+        if self._postgres:
+            self._initialize_postgres()
+            return
         conn = self.connect()
         conn.executescript(SCHEMA_SQL)
         self._ensure_columns(conn)
         conn.commit()
 
-    def _ensure_columns(self, conn: sqlite3.Connection) -> None:
+    def _initialize_postgres(self) -> None:
+        if self.database_url in _POSTGRES_INITIALIZED:
+            return
+        with _POSTGRES_INITIALIZE_LOCK:
+            if self.database_url in _POSTGRES_INITIALIZED:
+                return
+            profile = os.environ.get("GEOCHEM_PROFILE", "development").strip().lower()
+            default_mode = "alembic" if profile in {"staging", "production"} else "auto"
+            schema_mode = os.environ.get("GEOCHEM_POSTGRES_SCHEMA_MODE", default_mode).strip().lower()
+            if schema_mode not in {"auto", "alembic"}:
+                raise RuntimeError(
+                    "GEOCHEM_POSTGRES_SCHEMA_MODE must be 'auto' or 'alembic'"
+                )
+            if schema_mode == "alembic":
+                self._verify_postgres_migration()
+                _POSTGRES_INITIALIZED.add(self.database_url)
+                return
+            try:
+                for statement in postgres_schema_statements(SCHEMA_SQL):
+                    self._postgres.execute(statement)
+                self._ensure_columns(self._postgres)
+                self._postgres.commit()
+            except Exception:
+                self._postgres.rollback()
+                raise
+            _POSTGRES_INITIALIZED.add(self.database_url)
+
+    def _verify_postgres_migration(self) -> None:
+        """Require a completed Alembic migration without mutating server DDL."""
+
+        try:
+            revision = self._postgres.fetch_one(
+                "SELECT version_num FROM alembic_version LIMIT 1"
+            )
+            projects_table = self._postgres.fetch_one(
+                "SELECT to_regclass('projects') AS table_name"
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                "PostgreSQL schema is not ready. Run 'alembic upgrade head' before starting GeoChem."
+            ) from exc
+        if not revision or not revision.get("version_num") or not projects_table or not projects_table.get("table_name"):
+            raise RuntimeError(
+                "PostgreSQL schema is not ready. Run 'alembic upgrade head' before starting GeoChem."
+            )
+
+    def _ensure_columns(self, conn) -> None:
         """Backfill additive columns for databases created by earlier versions."""
         self._ensure_table_columns(conn, "export_jobs", {
             "article_id": "TEXT",
@@ -892,6 +1059,7 @@ class Database:
         })
         self._ensure_table_columns(conn, "articles", {
             "article_dir": "TEXT DEFAULT ''",
+            "owner_user_id": "TEXT DEFAULT ''",
         })
         self._ensure_table_columns(conn, "calculation_records", {
             "candidate_record_id": "TEXT",
@@ -943,8 +1111,33 @@ class Database:
         self._ensure_table_columns(conn, "chat_messages", {
             "ui_payload_json": "TEXT DEFAULT '{}'",
         })
+        self._ensure_table_columns(conn, "workflow_tasks", {
+            "operation_name": "TEXT DEFAULT ''",
+            "payload_json": "TEXT DEFAULT '{}'",
+            "task_key": "TEXT DEFAULT ''",
+            "broker_task_id": "TEXT DEFAULT ''",
+            "retry_count": "INTEGER DEFAULT 0",
+        })
+        conn.execute(
+            """CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_tasks_active_key
+               ON workflow_tasks(task_key)
+               WHERE task_key <> '' AND status IN ('pending', 'running')"""
+        )
 
-    def _ensure_table_columns(self, conn: sqlite3.Connection, table: str, additions: dict[str, str]) -> None:
+    def _ensure_table_columns(self, conn, table: str, additions: dict[str, str]) -> None:
+        if self.dialect == "postgresql":
+            existing = {
+                row["column_name"]
+                for row in conn.fetch_all(
+                    """SELECT column_name FROM information_schema.columns
+                       WHERE table_schema = current_schema() AND table_name = ?""",
+                    (table,),
+                )
+            }
+            for column, decl in additions.items():
+                if column not in existing:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+            return
         existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
         for column, decl in additions.items():
             if column not in existing:
@@ -956,23 +1149,41 @@ class Database:
                     if "duplicate column name" not in str(exc).lower():
                         raise
 
-    def execute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
+    def execute(self, sql: str, params: tuple = ()):
+        if self._postgres:
+            return self._postgres.execute(sql, params)
         conn = self.connect()
         return conn.execute(sql, params)
 
-    def executemany(self, sql: str, params_list: list[tuple]) -> sqlite3.Cursor:
+    def executemany(self, sql: str, params_list: list[tuple]):
+        if self._postgres:
+            return self._postgres.executemany(sql, params_list)
         conn = self.connect()
         return conn.executemany(sql, params_list)
 
     def commit(self) -> None:
+        if self._postgres:
+            self._postgres.commit()
+            return
         conn = self.connect()
         conn.commit()
 
-    def fetch_one(self, sql: str, params: tuple = ()) -> sqlite3.Row | None:
+    def rollback(self) -> None:
+        if self._postgres:
+            self._postgres.rollback()
+            return
+        conn = self.connect()
+        conn.rollback()
+
+    def fetch_one(self, sql: str, params: tuple = ()):
+        if self._postgres:
+            return self._postgres.fetch_one(sql, params)
         cursor = self.execute(sql, params)
         return cursor.fetchone()
 
-    def fetch_all(self, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
+    def fetch_all(self, sql: str, params: tuple = ()) -> list[Any]:
+        if self._postgres:
+            return self._postgres.fetch_all(sql, params)
         cursor = self.execute(sql, params)
         return cursor.fetchall()
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 from datetime import datetime
 import hashlib
 import json
@@ -20,6 +21,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
 from .core.config import load_config
+from .core.runtime import RuntimeProfile, load_runtime_settings
 from .agent_models import GroundedAnswer, HandoffContext, WorkbenchDiff
 from .core.project import ProjectManager
 from .core.secrets import resolve_secret
@@ -29,6 +31,8 @@ from .ingestion.literature_search import LiteratureSearchService
 from .ingestion.open_access_resolver import OpenAccessResolver
 from .providers.llm_client import LLMClient
 from .providers.langchain_adapter import GeoChemChatModel
+from .services.execution_context import current_user_id, user_execution_context
+from .services.model_access import resolve_user_model_grant
 from .workbench_service import WorkbenchService
 
 
@@ -354,6 +358,16 @@ class RetrievalService:
         match = " OR ".join(f'"{token.replace(chr(34), "")}"' for token in tokens[:10])
         db = self.pm.get_database(project_id)
         try:
+            if db.dialect == "postgresql":
+                rows = db.fetch_all(
+                    """SELECT d.* FROM retrieval_fts f JOIN retrieval_documents d ON d.document_id=f.document_id
+                       WHERE f.project_id=? AND f.article_id=?
+                         AND to_tsvector('simple', COALESCE(f.content, '')) @@ websearch_to_tsquery('simple', ?)
+                       ORDER BY ts_rank_cd(to_tsvector('simple', COALESCE(f.content, '')), websearch_to_tsquery('simple', ?)) DESC
+                       LIMIT 12""",
+                    (project_id, article_id, " OR ".join(tokens[:10]), " OR ".join(tokens[:10])),
+                )
+                return [self._decode_document(dict(row)) for row in rows]
             try:
                 rows = db.fetch_all(
                     """SELECT d.* FROM retrieval_fts f JOIN retrieval_documents d ON d.document_id=f.document_id
@@ -748,13 +762,19 @@ class ArticleCurationAgent:
 
     def __init__(self, project_manager: ProjectManager | None = None):
         self.pm = project_manager or ProjectManager()
+        self.runtime = load_runtime_settings()
         self.workbench = WorkbenchService(self.pm)
         self.rag = RetrievalService(self.pm)
         self.sources = OpenAccessResolver(self.pm)
         self.literature = LiteratureSearchService()
         self.tools = AgentToolRegistry(self.pm)
-        self.pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="geochem-agent")
+        self.pool = (
+            ThreadPoolExecutor(max_workers=2, thread_name_prefix="geochem-agent")
+            if self.runtime.task_backend == "local"
+            else None
+        )
         self._graphs: dict[str, Any] = {}
+        self._checkpoint_stack = ExitStack()
         self._skill_path = Path(__file__).resolve().parents[2] / "config" / "skills" / "article_curation_agent.md"
         self.chat_agent = ConversationalToolAgent(
             project_manager=self.pm,
@@ -1093,9 +1113,15 @@ class ArticleCurationAgent:
                 output_dir = str(payload.get("output_dir") or "").strip()
                 if output_dir:
                     _project, project_dir = self.pm.load_project(project_id)
+                    runtime = load_runtime_settings()
                     configured = str((load_config().ui_preferences or {}).get("export_dir") or "").strip()
                     requested_path = Path(output_dir).expanduser().resolve()
                     allowed = {(project_dir / "output").resolve()}
+                    if runtime.profile != RuntimeProfile.DEVELOPMENT:
+                        export_root = runtime.effective_export_root.expanduser().resolve()
+                        if requested_path != export_root and export_root not in requested_path.parents:
+                            raise ValueError("导出目录不在 GeoChem 服务器受控目录中。")
+                        allowed.add(requested_path)
                     if configured:
                         allowed.add(Path(configured).expanduser().resolve())
                     if requested_path not in allowed:
@@ -1198,7 +1224,21 @@ class ArticleCurationAgent:
             db.commit()
         finally:
             db.close()
-        self.pool.submit(self._invoke, run_id, project_id, {"project_id": project_id, "article_id": article_id, "run_id": run_id, "thread_id": thread_id, "user_message": message, "selection_context": context})
+        self._dispatch_invoke(
+            run_id,
+            project_id,
+            {
+                "kind": "start",
+                "state": {
+                    "project_id": project_id,
+                    "article_id": article_id,
+                    "run_id": run_id,
+                    "thread_id": thread_id,
+                    "user_message": message,
+                    "selection_context": context,
+                },
+            },
+        )
         return {"run_id": run_id, "status": "pending"}
 
     @staticmethod
@@ -1277,8 +1317,56 @@ class ArticleCurationAgent:
             db.commit()
         finally:
             db.close()
-        self.pool.submit(self._invoke, run_id, project_id, Command(resume=response))
+        self._dispatch_invoke(
+            run_id,
+            project_id,
+            {"kind": "resume", "response": response},
+        )
         return {"run_id": run_id, "status": "pending"}
+
+    def _dispatch_invoke(
+        self,
+        run_id: str,
+        project_id: str,
+        invocation: dict[str, Any],
+    ) -> None:
+        invocation = dict(invocation)
+        actor_user_id = current_user_id()
+        if actor_user_id:
+            invocation.setdefault("actor_user_id", actor_user_id)
+        if self.pool is not None:
+            if invocation.get("kind") == "resume":
+                payload: dict[str, Any] | Command = Command(
+                    resume=invocation.get("response") or {}
+                )
+            else:
+                payload = invocation.get("state") or {}
+
+            def invoke_with_identity() -> None:
+                with user_execution_context(actor_user_id):
+                    self._invoke(run_id, project_id, payload)
+
+            self.pool.submit(invoke_with_identity)
+            return
+        from .background_tasks import celery_app, create_celery_app
+
+        app = celery_app or create_celery_app(self.runtime)
+        try:
+            app.send_task(
+                "geochem.agent.invoke",
+                args=[project_id, run_id, invocation],
+                task_id=f"AGENT_{run_id}_{uuid4().hex}",
+                queue="geochem-agent",
+            )
+        except Exception as exc:
+            self._update_run(project_id, run_id, "failed", "dispatch_failed", error=str(exc))
+            self._event(project_id, run_id, "ERROR", f"Agent 任务提交失败: {exc}")
+            raise ValueError(f"无法提交 Agent 后台任务: {exc}") from exc
+
+    def close(self) -> None:
+        if self.pool is not None:
+            self.pool.shutdown(wait=False, cancel_futures=False)
+        self._checkpoint_stack.close()
 
     @staticmethod
     def _model_configuration_message() -> str:
@@ -1295,6 +1383,45 @@ class ArticleCurationAgent:
             )
         else:
             route = config.task_models.get(task_name) or config.task_models.get("_default")
+        if self.runtime.auth_mode == "oidc":
+            user_id = current_user_id()
+            if not user_id:
+                return {
+                    "available": False,
+                    "provider": "",
+                    "model": "",
+                    "key_source": "admin-allocation",
+                    "env_name": "",
+                    "message": "当前登录身份不可用，请重新登录。",
+                }
+            db = self.pm.get_default_database()
+            try:
+                grant = resolve_user_model_grant(
+                    db,
+                    self.runtime,
+                    user_id,
+                    preferred_provider=route.provider if route else "",
+                    preferred_model=route.model if route else "",
+                )
+                return {
+                    "available": True,
+                    "provider": grant.provider,
+                    "model": grant.model_id,
+                    "key_source": "admin-allocation",
+                    "env_name": "",
+                    "credential_id": grant.credential_id,
+                }
+            except ValueError as exc:
+                return {
+                    "available": False,
+                    "provider": route.provider if route else "",
+                    "model": route.model if route else "",
+                    "key_source": "admin-allocation",
+                    "env_name": "",
+                    "message": str(exc),
+                }
+            finally:
+                db.close()
         provider = config.get_provider(route.provider) if route else None
         secret, source, env_name = resolve_secret(provider.api_key if provider else None)
         key_not_required = bool(
@@ -1575,12 +1702,31 @@ class ArticleCurationAgent:
     def _graph(self, project_id: str):
         if project_id in self._graphs:
             return self._graphs[project_id]
-        _project, project_dir = self.pm.load_project(project_id)
-        checkpoint_dir = project_dir / ".agent"
-        checkpoint_dir.mkdir(exist_ok=True)
-        conn = sqlite3.connect(checkpoint_dir / "agent_state.sqlite", check_same_thread=False)
-        checkpointer = SqliteSaver(conn)
-        checkpointer.setup()
+        if (
+            self.runtime.profile != RuntimeProfile.DEVELOPMENT
+            and self.runtime.effective_checkpoint_database_url
+        ):
+            try:
+                from langgraph.checkpoint.postgres import PostgresSaver
+            except ImportError as exc:  # pragma: no cover - server dependency
+                raise RuntimeError(
+                    "langgraph-checkpoint-postgres is required for server profiles"
+                ) from exc
+            checkpoint_url = self.runtime.effective_checkpoint_database_url.replace(
+                "postgresql+psycopg://", "postgresql://", 1
+            )
+            context = PostgresSaver.from_conn_string(checkpoint_url)
+            checkpointer = self._checkpoint_stack.enter_context(context)
+            checkpointer.setup()
+        else:
+            _project, project_dir = self.pm.load_project(project_id)
+            checkpoint_dir = project_dir / ".agent"
+            checkpoint_dir.mkdir(exist_ok=True)
+            conn = sqlite3.connect(
+                checkpoint_dir / "agent_state.sqlite", check_same_thread=False
+            )
+            checkpointer = SqliteSaver(conn)
+            checkpointer.setup()
         graph = StateGraph(AgentState)
         graph.add_node("classify", self._classify)
         graph.add_node("select_entity", self._select_entity)
@@ -2287,17 +2433,19 @@ class ArticleCurationAgent:
         model.
         """
         config = load_config()
-        route = config.get_task_model("chat_assistant")
-        model_label = f"当前对话模型为 {route.provider} / {route.model}。" if route else "当前尚未配置对话模型。"
+        status = self._task_model_status("chat_agent")
+        model_label = (
+            f"当前对话模型为 {status['provider']} / {status['model']}。"
+            if status.get("available")
+            else "当前尚未分配可用的对话模型。"
+        )
         capability_text = (
             "我是 GeoChem 数据整理 Agent，负责科研地球化学论文的数据发现、表格标准化、字段映射、"
             "证据溯源、审核、统计和导出。\n\n"
             f"{model_label}\n\n"
             "你可以给我 DOI、公开 URL 或 PDF 开始一篇文章的处理；也可以在已绑定文章的对话里询问某个样品、字段或数据来源。"
         )
-        provider = config.get_provider(route.provider) if route else None
-        api_key, _source, _env_name = resolve_secret(provider.api_key if provider else None)
-        can_call = bool(route and provider and provider.enabled and (api_key or provider.auth_type == "none" or provider.name == "ollama"))
+        can_call = bool(status.get("available"))
         if not can_call:
             if run_id:
                 self._event(project_id, run_id, "INFO", "未调用对话模型：尚未配置可用 API Key，返回本地功能说明")
@@ -2313,12 +2461,12 @@ class ArticleCurationAgent:
                             "Reply in concise Chinese. You may explain the product, its workflow and safe capabilities. "
                             "Do not claim that an article was imported, a value was extracted, or a local record exists "
                             "unless a supplied tool result or citation establishes it. Do not invent citations. "
-                            f"The configured chat route is {route.provider} / {route.model}."
+                            f"The configured chat route is {status.get('provider', '')} / {status.get('model', '')}."
                         ),
                     },
                     {"role": "user", "content": question},
                 ],
-                task_name="chat_assistant",
+                task_name="chat_agent",
                 project_id=project_id,
                 agent_name="article_curation_chat",
                 skill_name="general_conversation",

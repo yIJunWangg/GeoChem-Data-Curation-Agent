@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+import os
 import re
+import threading
 from datetime import datetime
 from pathlib import Path
+from typing import Iterator
 
 import yaml
 
@@ -44,14 +48,44 @@ ARTICLE_DIRS = [
     "trace",
 ]
 
+_DEFAULT_WORKSPACE_THREAD_LOCK = threading.Lock()
+
+
+@contextmanager
+def _default_workspace_lock(base_dir: Path) -> Iterator[None]:
+    """Serialize the one-time workspace bootstrap across Web worker processes."""
+
+    base_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = base_dir / ".default-workspace.lock"
+    with _DEFAULT_WORKSPACE_THREAD_LOCK, open(lock_path, "a+", encoding="utf-8") as lock_file:
+        try:
+            import fcntl
+        except ImportError:  # pragma: no cover - Windows native is not a server target.
+            fcntl = None
+        if fcntl is not None:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if fcntl is not None:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
 
 class ProjectManager:
     """Manage GeoChem projects."""
 
     def __init__(self, base_dir: str | Path | None = None):
         from .config import load_config
+        from .runtime import RuntimeProfile, load_runtime_settings
         config = load_config()
-        self.base_dir = Path(base_dir).expanduser() if base_dir else Path(config.default_project_dir).expanduser()
+        runtime = load_runtime_settings()
+        if base_dir:
+            self.base_dir = Path(base_dir).expanduser()
+        elif runtime.profile != RuntimeProfile.DEVELOPMENT or "GEOCHEM_STORAGE_ROOT" in __import__("os").environ:
+            self.base_dir = runtime.storage_root
+        else:
+            self.base_dir = Path(config.default_project_dir).expanduser()
+        self.database_url = runtime.database_url
 
     def create_project(
         self,
@@ -84,7 +118,7 @@ class ProjectManager:
         with open(config_path, "w", encoding="utf-8") as f:
             yaml.dump(config.model_dump(), f, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
-        db = Database(project_dir / "geochem.db")
+        db = Database(project_dir / "geochem.db", self.database_url)
         db.initialize()
 
         db.execute(
@@ -98,10 +132,61 @@ class ProjectManager:
         return project_dir
 
     def ensure_default_workspace(self) -> tuple[ProjectConfig, Path]:
-        """Create or load the single UI workspace."""
+        """Create or repair the single UI workspace idempotently.
+
+        Uvicorn imports the application once per worker. A filesystem lock keeps
+        those workers from observing a half-written ``project.yaml`` during a
+        fresh server bootstrap.
+        """
         project_dir = self.base_dir / DEFAULT_WORKSPACE_ID
-        if not project_dir.exists():
-            self.create_project("GeoChem Workspace", DEFAULT_WORKSPACE_ID, "Default single-user workspace")
+        with _default_workspace_lock(self.base_dir):
+            config_path = project_dir / "project.yaml"
+            if config_path.exists():
+                with open(config_path, "r", encoding="utf-8") as f:
+                    config = ProjectConfig(**yaml.safe_load(f))
+            else:
+                config = ProjectConfig(
+                    project_name="GeoChem Workspace",
+                    project_id=DEFAULT_WORKSPACE_ID,
+                    description="Default shared workspace",
+                )
+
+            project_dir.mkdir(parents=True, exist_ok=True)
+            for directory in PROJECT_DIRS:
+                (project_dir / directory).mkdir(parents=True, exist_ok=True)
+
+            if not config_path.exists():
+                temporary_path = config_path.with_name(f".{config_path.name}.{os.getpid()}.tmp")
+                with open(temporary_path, "w", encoding="utf-8") as f:
+                    yaml.dump(
+                        config.model_dump(),
+                        f,
+                        default_flow_style=False,
+                        allow_unicode=True,
+                        sort_keys=False,
+                    )
+                os.replace(temporary_path, config_path)
+
+            now = datetime.now().isoformat()
+            db = Database(project_dir / "geochem.db", self.database_url)
+            try:
+                db.initialize()
+                db.execute(
+                    "INSERT OR IGNORE INTO projects "
+                    "(project_id, project_name, description, research_field, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        config.project_id,
+                        config.project_name,
+                        config.description,
+                        config.research_field,
+                        config.created_at.isoformat(),
+                        now,
+                    ),
+                )
+                db.commit()
+            finally:
+                db.close()
         return self.load_project(DEFAULT_WORKSPACE_ID)
 
     def load_project(self, project_id: str) -> tuple[ProjectConfig, Path]:
@@ -121,7 +206,7 @@ class ProjectManager:
     def get_database(self, project_id: str) -> Database:
         """Get the database connection for a project."""
         project_dir = self.base_dir / project_id
-        db = Database(project_dir / "geochem.db")
+        db = Database(project_dir / "geochem.db", self.database_url)
         db.initialize()
         return db
 
