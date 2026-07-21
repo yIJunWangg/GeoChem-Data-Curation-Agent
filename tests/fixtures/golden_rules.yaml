@@ -1,0 +1,141 @@
+# Golden mapping rules for testing
+rules:
+  - rule_id: RULE_SIO2_SYMBOL
+    source_field: SiO₂
+    target_field: SiO2
+    source_unit: wt%
+    target_unit: wt%
+    mapping_type: alias_normalization
+    formula: null
+    conversion_factor: null
+    review_status: confirmed
+    scope: global
+    version: 1
+    created_at: "2026-01-01T00:00:00"
+    created_by: system
+
+  - rule_id: RULE_NA2O_SELF
+    source_field: Na2O
+    target_field: Na2O
+    source_unit: wt%
+    target_unit: wt%
+    mapping_type: exact
+    formula: null
+    conversion_factor: null
+    review_status: confirmed
+    scope: global
+    version: 1
+    created_at: "2026-01-01T00:00:00"
+    created_by: system
+
+  - rule_id: RULE_NA2O_TO_NA
+    source_field: Na2O
+    target_field: Na
+    source_unit: wt%
+    target_unit: wt%
+    mapping_type: oxide_to_element
+    formula: "Na = Na2O * 0.741857"
+    conversion_factor: 0.741857
+    review_status: pending
+    scope: project
+    version: 1
+    created_at: "2026-01-01T00:00:00"
+    created_by: system
+
+  - rule_id: RULE_K2O_TO_K
+    source_field: K2O
+    target_field: K
+    source_unit: wt%
+    target_unit: wt%
+    mapping_type: oxide_to_element
+    formula: "K = K2O * 0.830153"
+    conversion_factor: 0.830153
+    review_status: pending
+    scope: project
+    version: 1
+    created_at: "2026-01-01T00:00:00"
+    created_by: system
+
+  - rule_id: RULE_CIA_ALIAS
+    source_field: Chemical Index of Alteration
+    target_field: CIA
+    source_unit: dimensionless
+    target_unit: dimensionless
+    mapping_type: alias_mapping
+    formula: null
+    conversion_factor: null
+    review_status: confirmed
+    scope: global
+    version: 1
+    created_at: "2026-01-01T00:00:00"
+    created_by: system
+
+  - rule_id: RULE_PPM_TO_WT
+    source_field: _ppm
+    target_field: _wt
+    source_unit: ppm
+    target_unit: wt%
+    mapping_type: unit_conversion
+    formula: "wt% = ppm / 10000"
+    conversion_factor: 0.0001
+    review_status: confirmed
+    scope: global
+    version: 1
+    created_at: "2026-01-01T00:00:00"
+    created_by: system
+
+  - rule_id: RULE_MGKG_TO_PPM
+    source_field: _mg/kg
+    target_field: _ppm
+    source_unit: mg/kg
+    target_unit: ppm
+    mapping_type: unit_conversion
+    formula: "ppm = mg/kg"
+    conversion_factor: 1.0
+    review_status: confirmed
+    scope: global
+    version: 1
+    created_at: "2026-01-01T00:00:00"
+    created_by: system
+
+  - rule_id: RULE_FEOT_HIGH_RISK
+    source_field: FeOT
+    target_field: FeOT
+    source_unit: wt%
+    target_unit: wt%
+    mapping_type: uncertain
+    formula: null
+    conversion_factor: null
+    review_status: pending
+    scope: project
+    version: 1
+    created_at: "2026-01-01T00:00:00"
+    created_by: system
+
+  - rule_id: RULE_LOI_SELF
+    source_field: LOI
+    target_field: LOI
+    source_unit: wt%
+    target_unit: wt%
+    mapping_type: exact
+    formula: null
+    conversion_factor: null
+    review_status: confirmed
+    scope: global
+    version: 1
+    created_at: "2026-01-01T00:00:00"
+    created_by: system
+
+  - rule_id: RULE_SAMPLE_NO
+    source_field: Sample No.
+    target_field: Sample_ID
+    source_unit: null
+    target_unit: null
+    mapping_type: alias_mapping
+    formula: null
+    conversion_factor: null
+    review_status: confirmed
+    scope: global
+    version: 1
+    created_at: "2026-01-01T00:00:00"
+    created_by: system

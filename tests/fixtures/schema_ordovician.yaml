@@ -1,0 +1,784 @@
+schema_name: geochem_ordovician
+version: '1.0'
+columns:
+- name: SampleID
+  type: string
+  description: Sample identifier
+  aliases:
+  - Sample No.
+  - Sample Number
+  - 样品编号
+  - Sample Name
+  required: true
+- name: FirstAuthor
+  type: string
+  description: First author
+- name: Year
+  type: integer
+  description: Publication year
+- name: Title
+  type: string
+  description: Paper title
+- name: Reference
+  type: string
+  description: Full reference citation
+- name: DOI
+  type: string
+  description: Digital Object Identifier
+  aliases:
+  - doi
+- name: DataSource
+  type: string
+  description: Data source URL
+- name: Latitude
+  type: float
+  description: Latitude (decimal degrees)
+  aliases:
+  - Lat
+  - 纬度
+- name: Longitude
+  type: float
+  description: Longitude (decimal degrees)
+  aliases:
+  - Lon
+  - Long
+  - 经度
+- name: Location1-detail
+  type: string
+  description: Detailed location
+  aliases:
+  - Location
+  - Location1
+- name: Location2-country
+  type: string
+  description: Country or region
+  aliases:
+  - Country
+  - Location2
+- name: SiteName
+  type: string
+  description: Site name
+- name: Paleolatitude
+  type: float
+  description: Paleolatitude (decimal degrees)
+- name: Paleolongitude
+  type: float
+  description: Paleolongitude (decimal degrees)
+- name: Depth/m
+  type: float
+  description: Depth in meters
+  aliases:
+  - Depth
+  - 深度
+- name: 深度说明
+  type: string
+  description: Depth description or notes
+- name: Age
+  type: float
+  description: Geological age (Ma)
+- name: Age_min
+  type: float
+  description: Minimum age (Ma)
+  aliases:
+  - Age（min）
+  - Age (min)
+- name: Age_max
+  type: float
+  description: Maximum age (Ma)
+  aliases:
+  - Age（max）
+  - Age (max)
+- name: 说明
+  type: string
+  description: Explanation or calculation method notes
+- name: RelativeDepth
+  type: string
+  description: Relative depth classification
+- name: Lithology
+  type: string
+  description: Rock type
+  aliases:
+  - 岩性
+- name: LithType
+  type: string
+  description: Lithology type
+- name: MetamorphicGrade
+  type: string
+  description: Metamorphic grade
+- name: Setting
+  type: string
+  description: Tectonic/depositional setting
+- name: 原文
+  type: string
+  description: Original text quote from source paper
+- name: WaterDepthest
+  type: float
+  description: Estimated water depth (m)
+- name: Formation
+  type: string
+  description: Geological formation
+  aliases:
+  - 组
+- name: Unit
+  type: string
+  description: Stratigraphic unit
+- name: Era
+  type: string
+  description: Geological era
+- name: Period
+  type: string
+  description: Geological period
+  aliases:
+  - 纪
+- name: Epoch
+  type: string
+  description: Geological epoch
+  aliases:
+  - 世
+- name: Stage
+  type: string
+  description: Geological stage
+  aliases:
+  - 阶
+- name: Note
+  type: string
+  description: Notes
+- name: SampleName
+  type: string
+  description: Sample name/label
+- name: Material
+  type: string
+  description: Sample material type
+- name: δ15Nbulk
+  type: float
+  description: Bulk δ15N
+  default_unit: ‰
+  aliases:
+  - d15N
+  - δ15N
+  chemical_form: isotope
+- name: δ15Nsil
+  type: float
+  description: Silicate δ15N
+  default_unit: ‰
+  chemical_form: isotope
+- name: δ15Nchlorin
+  type: float
+  description: Chlorin δ15N
+  default_unit: ‰
+  chemical_form: isotope
+- name: δ15Nker
+  type: float
+  description: Kerogen δ15N
+  default_unit: ‰
+  chemical_form: isotope
+- name: δ13Corg
+  type: float
+  description: Organic δ13C
+  default_unit: ‰
+  aliases:
+  - d13Corg
+  chemical_form: isotope
+- name: δ13Ccarb
+  type: float
+  description: Carbonate δ13C
+  default_unit: ‰
+  aliases:
+  - d13Ccarb
+  chemical_form: isotope
+- name: δ18Ocarb
+  type: float
+  description: Carbonate δ18O
+  default_unit: ‰
+  aliases:
+  - d18Ocarb
+  chemical_form: isotope
+- name: δ34Spy
+  type: float
+  description: Pyrite δ34S
+  default_unit: ‰
+  aliases:
+  - d34S
+  chemical_form: isotope
+- name: TN
+  type: float
+  description: Total nitrogen
+  default_unit: '%'
+  aliases:
+  - T.N.
+- name: TOC
+  type: float
+  description: Total organic carbon
+  default_unit: '%'
+  aliases:
+  - T.O.C.
+- name: TS
+  type: float
+  description: Total sulfur
+  default_unit: '%'
+  aliases:
+  - T.S.
+- name: C_N_mol
+  type: float
+  description: C/N molar ratio
+  aliases:
+  - C/Nmol
+  - C/N
+- name: CaCO3
+  type: float
+  description: CaCO3 content
+  default_unit: '%'
+  aliases:
+  - CaCO₃
+- name: TC
+  type: float
+  description: Total carbon
+  default_unit: '%'
+- name: TIC
+  type: float
+  description: Total inorganic carbon
+  default_unit: '%'
+- name: OI
+  type: float
+  description: Oxygen index
+  default_unit: mg CO2/g TOC
+- name: HI
+  type: float
+  description: Hydrogen index
+  default_unit: mg HC/g TOC
+- name: Tmax
+  type: float
+  description: Max pyrolysis temperature
+  default_unit: °C
+- name: S1
+  type: float
+  description: Free hydrocarbons
+  default_unit: mg HC/g Rock
+- name: S2
+  type: float
+  description: Kerogen hydrocarbons
+  default_unit: mg HC/g Rock
+- name: S3
+  type: float
+  description: CO2 from kerogen
+  default_unit: mg CO2/g Rock
+- name: C37
+  type: float
+  description: C37 alkenone
+  default_unit: nmol/g
+- name: Al2O3
+  type: float
+  description: Aluminum oxide
+  default_unit: wt%
+  aliases:
+  - Al2O3(wt%)
+  - Al₂O₃
+  chemical_form: oxide
+- name: CaO
+  type: float
+  description: Calcium oxide
+  default_unit: wt%
+  aliases:
+  - CaO(wt%)
+  chemical_form: oxide
+- name: K2O
+  type: float
+  description: Potassium oxide
+  default_unit: wt%
+  aliases:
+  - K2O(wt%)
+  - K₂O
+  chemical_form: oxide
+  review_required: true
+- name: Na2O
+  type: float
+  description: Sodium oxide
+  default_unit: wt%
+  aliases:
+  - Na2O(wt%)
+  - Na₂O
+  chemical_form: oxide
+  review_required: true
+- name: P2O5
+  type: float
+  description: Phosphorus pentoxide
+  default_unit: wt%
+  aliases:
+  - P2O5(wt%)
+  - P₂O₅
+  chemical_form: oxide
+- name: SiO2
+  type: float
+  description: Silicon dioxide
+  default_unit: wt%
+  aliases:
+  - SiO₂
+  chemical_form: oxide
+- name: TiO2
+  type: float
+  description: Titanium dioxide
+  default_unit: wt%
+  aliases:
+  - TiO₂
+  chemical_form: oxide
+- name: TFe2O3
+  type: float
+  description: Total iron as Fe2O3
+  default_unit: wt%
+  chemical_form: oxide
+  review_required: true
+- name: MnO
+  type: float
+  description: Manganese oxide
+  default_unit: wt%
+  chemical_form: oxide
+- name: MgO
+  type: float
+  description: Magnesium oxide
+  default_unit: wt%
+  chemical_form: oxide
+- name: Fe2O3
+  type: float
+  description: Iron(III) oxide
+  default_unit: wt%
+  aliases:
+  - Fe2O3%
+  chemical_form: oxide
+- name: FeO
+  type: float
+  description: Iron(II) oxide
+  default_unit: wt%
+  chemical_form: oxide
+  review_required: true
+- name: CaO_corr
+  type: float
+  description: Corrected CaO (detrital)
+  default_unit: wt%
+  aliases:
+  - CaO*
+  chemical_form: oxide
+- name: Cr2O3
+  type: float
+  description: Chromium(III) oxide
+  default_unit: wt%
+  chemical_form: oxide
+- name: P
+  type: float
+  description: Phosphorus
+  default_unit: '%'
+  chemical_form: element
+- name: Al
+  type: float
+  description: Aluminum
+  default_unit: '%'
+  chemical_form: element
+- name: K
+  type: float
+  description: Potassium
+  default_unit: '%'
+  chemical_form: element
+- name: Si
+  type: float
+  description: Silicon
+  default_unit: '%'
+  chemical_form: element
+- name: Ca
+  type: float
+  description: Calcium
+  default_unit: '%'
+  chemical_form: element
+- name: Ti
+  type: float
+  description: Titanium
+  default_unit: '%'
+  chemical_form: element
+- name: Na
+  type: float
+  description: Sodium
+  default_unit: '%'
+  chemical_form: element
+- name: Mg
+  type: float
+  description: Magnesium
+  default_unit: '%'
+  chemical_form: element
+- name: Fe
+  type: float
+  description: Iron
+  default_unit: '%'
+  chemical_form: element
+- name: LOI
+  type: float
+  description: Loss on ignition
+  default_unit: '%'
+  chemical_form: element
+- name: Li
+  type: float
+  description: Lithium
+  default_unit: ppm
+  chemical_form: element
+- name: Zn
+  type: float
+  description: Zinc
+  default_unit: ppm
+  chemical_form: element
+- name: Cu
+  type: float
+  description: Copper
+  default_unit: ppm
+  chemical_form: element
+- name: Ni
+  type: float
+  description: Nickel
+  default_unit: ppm
+  chemical_form: element
+- name: Co
+  type: float
+  description: Cobalt
+  default_unit: ppm
+  chemical_form: element
+- name: Mn
+  type: float
+  description: Manganese
+  default_unit: ppm
+  chemical_form: element
+- name: Cr
+  type: float
+  description: Chromium
+  default_unit: ppm
+  chemical_form: element
+- name: V
+  type: float
+  description: Vanadium
+  default_unit: ppm
+  chemical_form: element
+- name: Sc
+  type: float
+  description: Scandium
+  default_unit: ppm
+  chemical_form: element
+- name: Be
+  type: float
+  description: Beryllium
+  default_unit: ppm
+  chemical_form: element
+- name: Tm
+  type: float
+  description: Thulium
+  default_unit: ppm
+  chemical_form: element
+- name: Er
+  type: float
+  description: Erbium
+  default_unit: ppm
+  chemical_form: element
+- name: La
+  type: float
+  description: Lanthanum
+  default_unit: ppm
+  chemical_form: element
+- name: Ho
+  type: float
+  description: Holmium
+  default_unit: ppm
+  chemical_form: element
+- name: Dy
+  type: float
+  description: Dysprosium
+  default_unit: ppm
+  chemical_form: element
+- name: Lu
+  type: float
+  description: Lutetium
+  default_unit: ppm
+  chemical_form: element
+- name: Tb
+  type: float
+  description: Terbium
+  default_unit: ppm
+  chemical_form: element
+- name: Yb
+  type: float
+  description: Ytterbium
+  default_unit: ppm
+  chemical_form: element
+- name: Pb
+  type: float
+  description: Lead
+  default_unit: ppm
+  chemical_form: element
+- name: Hf
+  type: float
+  description: Hafnium
+  default_unit: ppm
+  chemical_form: element
+- name: Ta
+  type: float
+  description: Tantalum
+  default_unit: ppm
+  chemical_form: element
+- name: W
+  type: float
+  description: Tungsten
+  default_unit: ppm
+  chemical_form: element
+- name: Eu
+  type: float
+  description: Europium
+  default_unit: ppm
+  chemical_form: element
+- name: Bi
+  type: float
+  description: Bismuth
+  default_unit: ppm
+  chemical_form: element
+- name: Th
+  type: float
+  description: Thorium
+  default_unit: ppm
+  chemical_form: element
+- name: U
+  type: float
+  description: Uranium
+  default_unit: ppm
+  chemical_form: element
+- name: Gd
+  type: float
+  description: Gadolinium
+  default_unit: ppm
+  chemical_form: element
+- name: Zr
+  type: float
+  description: Zirconium
+  default_unit: ppm
+  chemical_form: element
+- name: Sm
+  type: float
+  description: Samarium
+  default_unit: ppm
+  chemical_form: element
+- name: Nd
+  type: float
+  description: Neodymium
+  default_unit: ppm
+  chemical_form: element
+- name: Ga
+  type: float
+  description: Gallium
+  default_unit: ppm
+  chemical_form: element
+- name: Rb
+  type: float
+  description: Rubidium
+  default_unit: ppm
+  chemical_form: element
+- name: Sr
+  type: float
+  description: Strontium
+  default_unit: ppm
+  chemical_form: element
+- name: Y
+  type: float
+  description: Yttrium
+  default_unit: ppm
+  chemical_form: element
+- name: Nb
+  type: float
+  description: Niobium
+  default_unit: ppm
+  chemical_form: element
+- name: Mo
+  type: float
+  description: Molybdenum
+  default_unit: ppm
+  chemical_form: element
+- name: Cd
+  type: float
+  description: Cadmium
+  default_unit: ppm
+  chemical_form: element
+- name: Sn
+  type: float
+  description: Tin
+  default_unit: ppm
+  chemical_form: element
+- name: Cs
+  type: float
+  description: Caesium
+  default_unit: ppm
+  chemical_form: element
+- name: Ba
+  type: float
+  description: Barium
+  default_unit: ppm
+  chemical_form: element
+- name: Ce
+  type: float
+  description: Cerium
+  default_unit: ppm
+  chemical_form: element
+- name: Pr
+  type: float
+  description: Praseodymium
+  default_unit: ppm
+  chemical_form: element
+- name: Hg
+  type: float
+  description: Mercury
+  default_unit: ppm
+  chemical_form: element
+- name: As
+  type: float
+  description: Arsenic
+  default_unit: ppm
+  chemical_form: element
+- name: Re
+  type: float
+  description: Rhenium
+  default_unit: ppm
+  chemical_form: element
+- name: Se
+  type: float
+  description: Selenium
+  default_unit: ppm
+  chemical_form: element
+- name: Tl
+  type: float
+  description: Thallium
+  default_unit: ppm
+  chemical_form: element
+- name: Ag
+  type: float
+  description: Silver
+  default_unit: ppm
+  chemical_form: element
+- name: Sb
+  type: float
+  description: Antimony
+  default_unit: ppm
+  chemical_form: element
+- name: B
+  type: float
+  description: Boron
+  default_unit: ppm
+  chemical_form: element
+- name: In
+  type: float
+  description: Indium
+  default_unit: ppm
+  chemical_form: element
+- name: Ge
+  type: float
+  description: Germanium
+  default_unit: ppm
+  chemical_form: element
+- name: Au
+  type: float
+  description: Gold
+  default_unit: ppm
+  chemical_form: element
+- name: S
+  type: float
+  description: Sulfur
+  default_unit: ppm
+  chemical_form: element
+- name: Fepy
+  type: float
+  description: Pyrite iron
+  default_unit: '%'
+  aliases:
+  - Fe_py
+- name: FeS2
+  type: float
+  description: Pyrite FeS2
+  default_unit: '%'
+- name: Fehr
+  type: float
+  description: Highly reactive iron
+  default_unit: '%'
+  aliases:
+  - Fe_hr
+- name: Fecarb
+  type: float
+  description: Carbonate iron
+  default_unit: '%'
+  aliases:
+  - Fe_carb
+- name: Feox
+  type: float
+  description: Oxide iron
+  default_unit: '%'
+  aliases:
+  - Fe_ox
+- name: Femag
+  type: float
+  description: Magnetite iron
+  default_unit: '%'
+  aliases:
+  - Fe_mag
+- name: Fepy_Fehr
+  type: float
+  description: Fe_py/Fe_hr ratio
+  aliases:
+  - Fepy/Fehr
+- name: Fehr_Fet
+  type: float
+  description: Fe_hr/Fe_t ratio
+  aliases:
+  - Fehr/Fet
+- name: Fecarb_Fet
+  type: float
+  description: Fe_carb/Fe_t ratio
+  aliases:
+  - Fecarb/Fet
+- name: Feox_Fet
+  type: float
+  description: Fe_ox/Fe_t ratio
+  aliases:
+  - Feox/Fet
+- name: CIA
+  type: float
+  description: Chemical Index of Alteration
+  aliases:
+  - Chemical Index of Alteration
+  review_required: true
+- name: CIAcorr
+  type: float
+  description: Corrected CIA
+  aliases:
+  - CIAcorr.
+- name: PIA
+  type: float
+  description: Plagioclase Index of Alteration
+- name: CIW
+  type: float
+  description: Chemical Index of Weathering
+- name: WIP
+  type: float
+  description: Weathering Index of Parker
+- name: DryDensity
+  type: float
+  description: Dry density
+  default_unit: g/cm3
+  aliases:
+  - Dry density
+- name: Unnamed_123
+  type: string
+  description: Unnamed column (possibly separator or notes)
+  aliases:
+  - 'Unnamed: 123'
+- name: REE_total
+  type: float
+  description: Total REE
+  aliases:
+  - REE（总量）
+- name: LREE
+  type: float
+  description: Light REE (La-Eu)
+  aliases:
+  - LREE（La-Eu）
+- name: HREE
+  type: float
+  description: Heavy REE (Gd-Lu+Y)
+  aliases:
+  - HREE（Gd-Lu+Y）

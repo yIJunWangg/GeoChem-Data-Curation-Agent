@@ -1,0 +1,95 @@
+# Minimal geochem schema for testing
+schema_name: geochem_test
+version: "1.0"
+columns:
+  - name: Sample_ID
+    type: string
+    description: Sample identifier
+    required: true
+    is_primary_key: true
+    aliases: ["Sample", "Sample ID", "Sample No.", "Sample Number", "样品编号", "Sample_ID"]
+
+  - name: Latitude
+    type: float
+    description: Latitude in decimal degrees
+    default_unit: degrees
+    aliases: ["Lat", "latitude", "LAT"]
+
+  - name: Longitude
+    type: float
+    description: Longitude in decimal degrees
+    default_unit: degrees
+    aliases: ["Lon", "Long", "longitude", "LON"]
+
+  - name: Formation
+    type: string
+    description: Geological formation name
+    aliases: ["Fm", "Formation Name", "地层"]
+
+  - name: Lithology
+    type: string
+    description: Rock type
+    aliases: ["Rock Type", "Lith", "岩性"]
+
+  - name: SiO2
+    type: float
+    description: Silicon dioxide concentration
+    default_unit: wt%
+    chemical_form: oxide
+    aliases: ["SiO2", "SiO₂", "silica", "Silicon dioxide"]
+
+  - name: Al2O3
+    type: float
+    description: Aluminum oxide concentration
+    default_unit: wt%
+    chemical_form: oxide
+    aliases: ["Al2O3", "Al₂O₃", "alumina", "Aluminum oxide"]
+
+  - name: Na
+    type: float
+    description: Elemental sodium concentration
+    default_unit: wt%
+    chemical_form: element
+    allow_conversion: true
+    aliases: ["Na", "Sodium", "sodium"]
+
+  - name: Na2O
+    type: float
+    description: Sodium oxide concentration
+    default_unit: wt%
+    chemical_form: oxide
+    allow_conversion: true
+    aliases: ["Na2O", "Na₂O", "sodium oxide"]
+
+  - name: K
+    type: float
+    description: Elemental potassium concentration
+    default_unit: wt%
+    chemical_form: element
+    allow_conversion: true
+    aliases: ["K", "Potassium", "potassium"]
+
+  - name: K2O
+    type: float
+    description: Potassium oxide concentration
+    default_unit: wt%
+    chemical_form: oxide
+    allow_conversion: true
+    aliases: ["K2O", "K₂O", "potassium oxide"]
+
+  - name: CIA
+    type: float
+    description: Chemical Index of Alteration
+    default_unit: dimensionless
+    chemical_form: index
+    aliases: ["CIA", "Chemical Index of Alteration", "chemical index of alteration"]
+
+  - name: Reference
+    type: string
+    description: Source reference citation
+    aliases: ["Ref", "Reference", "Citation", "参考文献"]
+
+  - name: DOI
+    type: string
+    description: Digital Object Identifier
+    aliases: ["DOI", "doi"]

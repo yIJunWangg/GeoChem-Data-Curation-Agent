@@ -5,9 +5,89 @@ from datetime import datetime
 
 import pytest
 
-from geochem.core.database import Database
+from geochem.core.database import Database, _POSTGRES_INITIALIZED
+from geochem.core.database_backend import postgres_schema_statements, qmark_to_pyformat, translate_postgres_sql
 
 NOW = datetime.now().isoformat()
+
+
+def test_postgres_parameter_translation_preserves_quoted_question_marks():
+    sql = "SELECT '?' AS literal, title FROM articles WHERE article_id = ?"
+    assert qmark_to_pyformat(sql) == "SELECT '?' AS literal, title FROM articles WHERE article_id = %s"
+
+
+def test_postgres_insert_or_ignore_translation():
+    translated = translate_postgres_sql("INSERT OR IGNORE INTO projects (project_id) VALUES (?)")
+    assert translated == "INSERT INTO projects (project_id) VALUES (%s) ON CONFLICT DO NOTHING"
+
+
+def test_postgres_schema_replaces_sqlite_specific_features():
+    statements = postgres_schema_statements(
+        """CREATE TABLE IF NOT EXISTS parent (id TEXT PRIMARY KEY);
+        CREATE TABLE IF NOT EXISTS child (
+            event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            parent_id TEXT,
+            FOREIGN KEY (parent_id) REFERENCES parent(id)
+        );
+        CREATE VIRTUAL TABLE IF NOT EXISTS retrieval_fts USING fts5(
+            document_id UNINDEXED, content, project_id UNINDEXED
+        );"""
+    )
+    joined = "\n".join(statements)
+    assert "AUTOINCREMENT" not in joined
+    assert "BIGSERIAL PRIMARY KEY" in joined
+    assert "CREATE VIRTUAL TABLE" not in joined
+    assert "to_tsvector('simple', content)" in joined
+    assert "ALTER TABLE child ADD CONSTRAINT" in joined
+
+
+class _FakePostgres:
+    def __init__(self, *, migrated=True):
+        self.migrated = migrated
+        self.executed = []
+
+    def fetch_one(self, sql, params=()):
+        if "alembic_version" in sql:
+            return {"version_num": "20260718_0001"} if self.migrated else None
+        if "to_regclass" in sql:
+            return {"table_name": "projects"} if self.migrated else {"table_name": None}
+        raise AssertionError(sql)
+
+    def execute(self, sql, params=()):
+        self.executed.append((sql, params))
+
+
+def _postgres_database(url, fake):
+    database = Database.__new__(Database)
+    database.db_path = None
+    database.database_url = url
+    database.dialect = "postgresql"
+    database._conn = None
+    database._postgres = fake
+    return database
+
+
+def test_postgres_alembic_mode_verifies_without_runtime_ddl(monkeypatch):
+    url = "postgresql+psycopg://test/schema-verification"
+    _POSTGRES_INITIALIZED.discard(url)
+    monkeypatch.setenv("GEOCHEM_PROFILE", "production")
+    monkeypatch.setenv("GEOCHEM_POSTGRES_SCHEMA_MODE", "alembic")
+    fake = _FakePostgres(migrated=True)
+
+    _postgres_database(url, fake).initialize()
+
+    assert fake.executed == []
+    assert url in _POSTGRES_INITIALIZED
+
+
+def test_postgres_alembic_mode_rejects_unmigrated_database(monkeypatch):
+    url = "postgresql+psycopg://test/missing-migration"
+    _POSTGRES_INITIALIZED.discard(url)
+    monkeypatch.setenv("GEOCHEM_PROFILE", "production")
+    monkeypatch.setenv("GEOCHEM_POSTGRES_SCHEMA_MODE", "alembic")
+
+    with pytest.raises(RuntimeError, match="alembic upgrade head"):
+        _postgres_database(url, _FakePostgres(migrated=False)).initialize()
 
 
 @pytest.fixture

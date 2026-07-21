@@ -1426,6 +1426,53 @@ def test_pdf_upload_can_create_first_article(tmp_path):
     assert articles[0]["resource_count"] == 1
 
 
+def test_resource_download_rejects_database_path_outside_project(tmp_path):
+    pm, _headers = _workspace(tmp_path)
+    external_pdf = tmp_path / "outside.pdf"
+    external_pdf.write_bytes(b"not a managed project resource")
+    db = pm.get_database("WEB_TEST")
+    try:
+        db.execute(
+            "UPDATE resources SET local_path=? WHERE resource_id='RES_WEB'",
+            (str(external_pdf),),
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    response = TestClient(create_app(pm)).get(
+        "/api/v1/resources/RES_WEB/pdf",
+        params={"project_id": "WEB_TEST"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_element_preview_rejects_database_path_outside_project(tmp_path):
+    pm, _headers = _workspace(tmp_path)
+    external_preview = tmp_path / "outside.png"
+    external_preview.write_bytes(b"not a managed project preview")
+    db = pm.get_database("WEB_TEST")
+    try:
+        db.execute(
+            """INSERT INTO document_elements
+               (element_id, project_id, article_id, resource_id, element_type,
+                preview_path, created_at, updated_at)
+               VALUES ('ELM_OUTSIDE', 'WEB_TEST', 'ART_WEB', 'RES_WEB', 'figure', ?, ?, ?)""",
+            (str(external_preview), datetime.now().isoformat(), datetime.now().isoformat()),
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    response = TestClient(create_app(pm)).get(
+        "/api/v1/elements/ELM_OUTSIDE/preview",
+        params={"project_id": "WEB_TEST"},
+    )
+
+    assert response.status_code == 403
+
+
 def test_short_element_symbols_are_case_sensitive(tmp_path):
     pm, _headers = _workspace(tmp_path)
     service = WorkbenchService(pm)
@@ -1637,12 +1684,37 @@ def test_export_auto_finalizes_and_records_trace(tmp_path):
     service.create_extraction_batch("WEB_TEST", "ART_WEB", use_llm=False)
     out_dir = tmp_path / "chosen_exports"
 
-    result = service.export_article("WEB_TEST", "ART_WEB", "csv", str(out_dir))
+    with TestClient(create_app(pm)) as client:
+        response = client.post(
+            "/api/v1/articles/ART_WEB/export",
+            json={
+                "project_id": "WEB_TEST",
+                "format": "csv",
+                "output_dir": str(out_dir),
+            },
+        )
+        assert response.status_code == 200
+        result = response.json()
+        jobs = client.get(
+            "/api/v1/export-jobs",
+            params={"project_id": "WEB_TEST", "article_id": "ART_WEB"},
+        )
+        download = client.get(
+            f"/api/v1/export-jobs/{result['job_id']}/download",
+            params={"project_id": "WEB_TEST"},
+        )
+
     summaries = service.trace_records("WEB_TEST")
 
     assert result["records"] == 46
+    assert result["job_id"].startswith("EXP_")
     assert Path(result["path"]).parent == out_dir
     assert Path(result["path"]).is_file()
+    assert jobs.status_code == 200
+    assert jobs.json()[0]["job_id"] == result["job_id"]
+    assert download.status_code == 200
+    assert "text/csv" in download.headers["content-type"]
+    assert download.content.startswith(b"\xef\xbb\xbf")
     assert summaries["total"] == 46
     db = pm.get_database("WEB_TEST")
     try:
