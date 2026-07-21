@@ -1,4 +1,0 @@
-2026-05-28 14:48:32,503 [ERROR] geochem.extractors.llm_extractor: Column mapping failed: All providers failed. Last error: API key is required for OpenAI provider
-None
-2026-05-28 16:51:42,279 [ERROR] geochem.llm_client: Failed to record LLM call: UNIQUE constraint failed: llm_calls.call_id
-None

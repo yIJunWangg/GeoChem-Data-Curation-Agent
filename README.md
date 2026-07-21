@@ -22,7 +22,7 @@ GeoChem Data Curation Agent automates the extraction of geochemical data (major 
 - **Token tracking**: Every LLM call logged with token usage and latency
 - **Positioned PDF evidence**: page-level tables, figures and paragraphs with normalized bounding boxes
 - **Sample-level candidate grid**: exact user headers, conservative SampleID merge and cell evidence
-- **Local Web UI**: React workbench backed by a localhost-only FastAPI service
+- **Web UI**: React workbench backed by FastAPI, with both local preview and managed LAN deployment
 - **CLI compatibility**: Existing curation pipeline remains operable from command line
 
 ## Tech Stack
@@ -31,13 +31,13 @@ GeoChem Data Curation Agent automates the extraction of geochemical data (major 
 |-----------|-----------|
 | Language | Python 3.10+ |
 | Data models | Pydantic 2.x |
-| Database | SQLite (WAL mode) |
+| Database | SQLite for local preview; PostgreSQL for shared deployments |
 | CLI | Typer + Rich |
 | PDF parsing | PyMuPDF, pdfplumber |
 | Excel/CSV | openpyxl, pandas |
 | LLM SDKs | openai, anthropic |
 | Config | PyYAML |
-| Local API | FastAPI + SSE |
+| API and tasks | FastAPI + SSE, Celery + Redis in shared deployments |
 | UI | React + TypeScript + Vite |
 | PDF viewer | PDF.js / React-PDF |
 | Candidate grid | AG Grid Community |
@@ -64,7 +64,7 @@ cd ..
 
 ## Quick Start
 
-### 1. Set up API keys
+### 1. Set up API keys for local development
 
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
@@ -75,16 +75,61 @@ export OPENROUTER_API_KEY="sk-or-..."
 # ... other providers as needed
 ```
 
-### Start the Web application
+### Start the Web application on this Mac
 
 ```bash
-.venv/bin/geochem-ui
+bash scripts/mac-preview.sh
 # Open http://127.0.0.1:8765
 ```
+
+This entry refreshes the React build first. If the requested port already runs
+GeoChem it reuses that preview; if another program owns the port, it selects a
+nearby free port. Pin a port with `GEOCHEM_PORT=8878 bash scripts/mac-preview.sh`,
+or set `GEOCHEM_SKIP_WEB_BUILD=true` when a frontend rebuild is unnecessary.
 
 The React + FastAPI application is the sole graphical interface. The explicit
 `.venv/bin/geochem-web` command starts the same Web service; `geochem-ui` is
 kept as a backwards-compatible alias.
+
+### Deploy for a LAN team
+
+The production profile uses PostgreSQL, Redis/Celery, Keycloak, Caddy and
+encrypted NAS backups. Build and validate the full Linux image in WSL2 before
+deploying it to Ubuntu Server. See [the LAN deployment manual](docs/lan-deployment.md).
+
+```bash
+# WSL2 integration host
+bash scripts/server-bootstrap.sh
+# edit deploy/.env, then:
+bash scripts/wsl2-deploy.sh
+
+# Ubuntu production host with NAS mounted
+bash scripts/server-deploy.sh --production
+sudo bash scripts/install-server-services.sh --start
+```
+
+The WSL2 command runs host preflight, image build, business and LangGraph
+checkpoint migrations, startup, post-deploy verification and prints the
+Administrator PowerShell command needed to trust the local HTTPS certificate.
+`scripts/server-acceptance.sh` adds an
+authenticated 50-user read-capacity baseline. The final command installs the
+systemd application service and nightly NAS backup timer. Docker is not required
+for the Mac preview path.
+
+The LAN build includes a Keycloak-backed login page and two separate product
+shells. Ordinary users enter the GeoChem workspace. Administrators choose the
+workspace or the dark management console after every login. The management
+console provides users, fixed roles, encrypted server-side model credentials,
+per-user model/token limits, storage quotas, tasks and audit records. Raw model
+keys are never returned to browsers. Environment-variable model keys remain an
+optional compatibility path, not a LAN setup requirement.
+
+The Mac preview renders both shells in an explicit read-only development mode;
+it does not pretend that Keycloak login is active. The first LAN administrator
+is generated into the protected `deploy/.env` file and must change the temporary
+password on first login. After opening the administrator overview in WSL2, run
+`bash scripts/wsl2-login-acceptance.sh` to verify the actual browser login and
+governance profile.
 
 ### 2. Create a project
 
@@ -189,34 +234,51 @@ fallback_chain:
 ```
 GeoChem Data Curation Agent/
 ├── config/
-│   └── settings.yaml          # Global LLM provider and task config
+│   ├── settings.example.yaml    # Config template (secrets via ${ENV} refs)
+│   └── skills/                  # Agent behavior specs (tool contracts)
 ├── src/geochem/
 │   ├── __init__.py
-│   ├── cli.py                 # Typer CLI entry point
+│   ├── cli.py                   # Typer CLI entry point
+│   ├── agent_service.py         # Retrieval + conversational + curation agents (LangGraph)
+│   ├── agent_tools.py           # Agent tool registry (Pydantic-validated inputs)
+│   ├── workbench_service.py     # Workbench domain service (elements, candidates, evidence)
+│   ├── workflow.py              # WorkflowRunner + EventBus
+│   ├── background_tasks.py      # Local thread pool / Celery task dispatch
 │   ├── core/
-│   │   ├── config.py          # AppConfig, ProviderConfig, load/save
-│   │   ├── database.py        # SQLite schema (17 tables)
-│   │   ├── exceptions.py      # 18 custom exception types
-│   │   ├── logging_config.py  # JSONL + console logging
-│   │   ├── memory.py          # MemoryStore (YAML + MD dual format)
-│   │   ├── models.py          # 20+ Pydantic data models
-│   │   ├── project.py         # ProjectManager (create/load/list)
-│   │   └── schema_manager.py  # SchemaManager (match, normalize, alias)
+│   │   ├── config.py            # AppConfig, ProviderConfig, load/save
+│   │   ├── database.py          # SQLite schema (50+ tables)
+│   │   ├── database_backend.py  # PostgreSQL backend
+│   │   ├── runtime.py           # Environment validation (dev/staging/production)
+│   │   ├── secrets.py           # ${ENV} / OS keychain secret resolution
+│   │   ├── exceptions.py        # Custom exception types
+│   │   ├── logging_config.py    # JSONL + console logging
+│   │   ├── memory.py            # MemoryStore (YAML + MD dual format)
+│   │   ├── models.py            # Pydantic data models
+│   │   ├── project.py           # ProjectManager (create/load/list)
+│   │   └── schema_manager.py    # SchemaManager (match, normalize, alias)
 │   ├── providers/
-│   │   ├── base.py            # BaseProvider ABC
-│   │   ├── registry.py        # ProviderRegistry
-│   │   ├── llm_client.py      # LLMClient (routing, fallback, caching)
-│   │   ├── openai_provider.py # OpenAI-compatible (12 providers)
+│   │   ├── base.py              # BaseProvider ABC
+│   │   ├── registry.py          # ProviderRegistry
+│   │   ├── llm_client.py        # LLMClient (routing, fallback, caching)
+│   │   ├── openai_provider.py   # OpenAI-compatible (12 providers)
 │   │   ├── anthropic_provider.py
+│   │   ├── google_provider.py
+│   │   ├── zhipu_provider.py
 │   │   └── ollama_provider.py
-│   ├── extractors/            # (WP3 - pending)
-│   ├── skills/                # (WP4-WP6 - pending)
-│   └── ui/                    # (WP7 - pending)
+│   ├── extractors/              # CSV / Excel / PDF (docling, pdfplumber, PyMuPDF)
+│   ├── ingestion/               # DOI, literature search, file import, web reader
+│   ├── curation/                # Mapping engine, standardization, review, teaching
+│   ├── services/                # Admin governance (AES-256-GCM credential vault), model access
+│   └── web/                     # FastAPI app, OIDC auth + RBAC, Keycloak admin
+├── web/                         # React 19 + TypeScript + Vite frontend
+├── deploy/                      # docker-compose, Caddy, Keycloak realm, systemd
+├── migrations/                  # Alembic PostgreSQL migrations
+├── scripts/                     # Bootstrap / deploy / verify / backup / load-test
 ├── tests/
-│   ├── fixtures/              # Test data (schema, Excel, CSV, rules)
-│   └── unit/                  # 77 unit tests
-├── pyproject.toml
-└── 开发计划_多Agent分工.md     # Development plan
+│   ├── fixtures/                # Test data (schema, Excel, CSV, rules)
+│   └── unit/                    # 330+ unit tests
+├── Dockerfile
+└── pyproject.toml
 ```
 
 ## Database Schema
@@ -278,7 +340,7 @@ pytest tests/ --cov=geochem --cov-report=term-missing
     - [x] 16 providers configured (Anthropic, OpenAI, DeepSeek, Xiaomi, OpenRouter, Qwen, Zhipu, MiniMax, Moonshot, Doubao, Baichuan, Hunyuan, Yi, StepFun, Ollama)
     - [x] CLI commands: `llm list`, `llm check`, `llm test`, `llm cost`
   - [x] CLI commands: `new-project`, `list-projects`, `status`, `import-schema`
-  - [x] 77 unit tests passing
+  - [x] Unit test suite (330+ tests)
 
 ### Current Work Packages
 
@@ -288,7 +350,7 @@ pytest tests/ --cov=geochem --cov-report=term-missing
 - [x] **WP5**: Review, teaching patches and rule memory
 - [x] **WP6**: Standardized export, trace and cost reporting
 - [x] **WP7**: Local Web UI foundation and schema-driven agent workbench
-- [ ] **WP8**: Desktop packaging, large-document performance and production visual regression
+- [ ] **WP8**: LAN production acceptance, large-document performance and production visual regression
 
 ## License
 
