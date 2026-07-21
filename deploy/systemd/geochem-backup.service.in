@@ -1,0 +1,21 @@
+[Unit]
+Description=GeoChem PostgreSQL and document backup to NAS
+RequiresMountsFor="@GEOCHEM_NAS_MOUNT@"
+Wants=geochem.service network-online.target
+After=geochem.service network-online.target
+ConditionPathExists="@GEOCHEM_ENV_FILE@"
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+WorkingDirectory="@GEOCHEM_ROOT@"
+Environment="GEOCHEM_ENV_FILE=@GEOCHEM_ENV_FILE@"
+ExecStart="@GEOCHEM_ROOT@/scripts/backup-server.sh"
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+TimeoutStartSec=6h
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,12 @@
+[Unit]
+Description=Run the GeoChem NAS backup every night
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+RandomizedDelaySec=20m
+AccuracySec=5m
+Persistent=true
+Unit=geochem-backup.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,141 @@
+{
+  "realm": "geochem",
+  "displayName": "GeoChem Workspace",
+  "loginTheme": "geochem",
+  "enabled": true,
+  "registrationAllowed": false,
+  "resetPasswordAllowed": true,
+  "rememberMe": true,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "verifyEmail": false,
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "failureFactor": 5,
+  "waitIncrementSeconds": 60,
+  "maxFailureWaitSeconds": 900,
+  "roles": {
+    "realm": [
+      {
+        "name": "admin",
+        "description": "GeoChem administrators: settings, users, models, and all data operations"
+      },
+      {
+        "name": "curator",
+        "description": "GeoChem curators: import, discovery, extraction, mapping, and candidate editing"
+      },
+      {
+        "name": "reviewer",
+        "description": "GeoChem reviewers: candidate approval, standardization, and export"
+      },
+      {
+        "name": "viewer",
+        "description": "GeoChem read-only access"
+      }
+    ]
+  },
+  "defaultRoles": [
+    "offline_access",
+    "uma_authorization",
+    "viewer"
+  ],
+  "clients": [
+    {
+      "clientId": "geochem-api",
+      "name": "GeoChem API audience",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "bearerOnly": true,
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false
+    },
+    {
+      "clientId": "geochem-web",
+      "name": "GeoChem Web",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": true,
+      "rootUrl": "https://geochem.lan",
+      "baseUrl": "https://geochem.lan/",
+      "redirectUris": [
+        "https://geochem.lan/*"
+      ],
+      "webOrigins": [
+        "https://geochem.lan"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "https://geochem.lan/*"
+      },
+      "protocolMappers": [
+        {
+          "name": "GeoChem API audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "geochem-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "clientScopes": [
+    {
+      "name": "geochem-roles",
+      "description": "Expose GeoChem realm roles to the SPA for role-aware navigation",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "GeoChem realm roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "multivalued": "true",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "realm_access.roles",
+            "jsonType.label": "String"
+          }
+        }
+      ]
+    }
+  ],
+  "defaultDefaultClientScopes": [
+    "profile",
+    "email",
+    "roles",
+    "web-origins",
+    "acr",
+    "basic",
+    "geochem-roles"
+  ],
+  "defaultOptionalClientScopes": [
+    "address",
+    "phone",
+    "offline_access",
+    "microprofile-jwt"
+  ],
+  "internationalizationEnabled": true,
+  "supportedLocales": [
+    "zh-CN",
+    "en"
+  ],
+  "defaultLocale": "zh-CN"
+}

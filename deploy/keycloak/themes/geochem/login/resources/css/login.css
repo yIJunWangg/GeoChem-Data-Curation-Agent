@@ -1,0 +1,96 @@
+:root {
+  --geochem-blue: #1769e0;
+  --geochem-ink: #10213a;
+  --geochem-muted: #60718b;
+  --geochem-line: #d9e2ef;
+}
+
+body,
+.login-pf body {
+  min-height: 100vh;
+  background:
+    linear-gradient(115deg, rgba(10, 53, 108, 0.92), rgba(21, 106, 224, 0.78)),
+    #0b3f7d;
+  color: var(--geochem-ink);
+  font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+}
+
+.login-pf-page {
+  padding: 7vh 24px 32px;
+}
+
+.login-pf-page .login-pf-header h1 {
+  color: #fff;
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-shadow: none;
+}
+
+.login-pf-page .card-pf,
+.pf-v5-c-login__main,
+.pf-c-login__main {
+  width: min(440px, calc(100vw - 32px));
+  margin: 0 auto;
+  padding: 32px;
+  border: 1px solid rgba(255, 255, 255, 0.38);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 22px 58px rgba(6, 28, 58, 0.28);
+}
+
+.pf-v5-c-form__label-text,
+.pf-c-form__label-text {
+  color: var(--geochem-ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.pf-v5-c-form-control,
+.pf-c-form-control,
+input[type="text"],
+input[type="password"] {
+  min-height: 42px;
+  border-color: var(--geochem-line);
+  border-radius: 6px;
+  font-size: 15px;
+}
+
+.pf-v5-c-button.pf-m-primary,
+.pf-c-button.pf-m-primary,
+#kc-login {
+  min-height: 42px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--geochem-blue);
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.pf-v5-c-button.pf-m-primary:hover,
+.pf-c-button.pf-m-primary:hover,
+#kc-login:hover {
+  background: #0f58c4;
+}
+
+#kc-info-wrapper,
+.login-pf-settings,
+.pf-v5-c-login__main-footer-band {
+  color: var(--geochem-muted);
+}
+
+a {
+  color: var(--geochem-blue);
+}
+
+@media (max-width: 600px) {
+  .login-pf-page {
+    padding: 28px 16px;
+  }
+
+  .login-pf-page .card-pf,
+  .pf-v5-c-login__main,
+  .pf-c-login__main {
+    padding: 24px;
+  }
+}

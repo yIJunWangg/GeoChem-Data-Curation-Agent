@@ -1,0 +1,24 @@
+[Unit]
+Description=GeoChem LAN production stack
+Requires=docker.service
+Wants=network-online.target
+After=docker.service network-online.target
+ConditionPathExists="@GEOCHEM_ENV_FILE@"
+ConditionPathExists="@GEOCHEM_COMPOSE_FILE@"
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=root
+WorkingDirectory="@GEOCHEM_ROOT@"
+Environment="GEOCHEM_ENV_FILE=@GEOCHEM_ENV_FILE@"
+ExecStartPre=@DOCKER_BIN@ compose --env-file "@GEOCHEM_ENV_FILE@" -f "@GEOCHEM_COMPOSE_FILE@" config --quiet
+ExecStart=@DOCKER_BIN@ compose --env-file "@GEOCHEM_ENV_FILE@" -f "@GEOCHEM_COMPOSE_FILE@" up -d --wait --wait-timeout 360
+ExecStartPost="@GEOCHEM_ROOT@/scripts/server-verify.sh"
+ExecReload="@GEOCHEM_ROOT@/scripts/server-deploy.sh" --production --skip-build
+ExecStop=-@DOCKER_BIN@ compose --env-file "@GEOCHEM_ENV_FILE@" -f "@GEOCHEM_COMPOSE_FILE@" stop caddy web worker keycloak redis postgres
+TimeoutStartSec=20min
+TimeoutStopSec=15min
+
+[Install]
+WantedBy=multi-user.target

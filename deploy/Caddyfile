@@ -1,0 +1,43 @@
+{
+    admin off
+    email off
+}
+
+https://{$GEOCHEM_SITE_HOST:geochem.lan} {
+    tls internal
+    encode zstd gzip
+
+    request_body {
+        max_size {$GEOCHEM_MAX_UPLOAD_SIZE:512MB}
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "same-origin"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; img-src 'self' data: blob:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' https://{$GEOCHEM_AUTH_HOST:auth.geochem.lan}; worker-src 'self' blob:; frame-src 'self' blob:"
+        -Server
+    }
+
+    reverse_proxy web:8765 {
+        transport http {
+            read_timeout 10m
+            write_timeout 10m
+        }
+    }
+}
+
+https://{$GEOCHEM_AUTH_HOST:auth.geochem.lan} {
+    tls internal
+    encode zstd gzip
+
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "same-origin"
+        -Server
+    }
+
+    reverse_proxy keycloak:8080
+}
