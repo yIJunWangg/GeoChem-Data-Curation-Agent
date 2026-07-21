@@ -724,8 +724,14 @@ def test_critical_standardization_requires_approved_cells_and_is_idempotent(tmp_
 def test_chat_upload_selects_main_pdf_without_starting_agent(tmp_path):
     manager = _project(tmp_path)
     app = create_app(manager)
-    pdf_path = Path(__file__).resolve().parents[1] / "main.pdf"
-    assert pdf_path.exists()
+    pdf_path = tmp_path / "main.pdf"
+    import fitz
+
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "Synthetic upload fixture for agent chat test.")
+    doc.save(pdf_path)
+    doc.close()
     with TestClient(app) as client, pdf_path.open("rb") as source:
         created = client.post("/api/v1/chat/threads", json={"project_id": "AGENT_TEST", "scope": "workspace"}).json()
         uploaded = client.post(

@@ -20,7 +20,9 @@ logs/
 tests/.cache/
 tests/*.pdf
 tests/奥陶纪地化数据*.xlsx
-tests/奥陶纪地化数据*_headers.json
+# Test fixtures committed intentionally (CC-BY / project metadata):
+!tests/feart-09-788349.pdf
+!tests/奥陶纪地化数据_headers.json
 .DS_Store
 geochem-data/
 output/
