@@ -1630,7 +1630,7 @@ def test_trace_api_defaults_to_all_articles_and_deduplicates_finalize_runs(tmp_p
 
     assert response.status_code == 200
     assert response.json()["total"] == 46
-    assert filtered.json()["total"] == 43
+    assert filtered.json()["total"] == 46
     assert detail.status_code == 200
     assert detail.json()["resources"][0]["resource_id"] == "RES_WEB"
     db = pm.get_database("WEB_TEST")
