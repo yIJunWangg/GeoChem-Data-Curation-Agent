@@ -21,8 +21,9 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
 from .core.config import load_config
-from .core.runtime import RuntimeProfile, load_runtime_settings
-from .agent_models import GroundedAnswer, HandoffContext, WorkbenchDiff
+from .core.logging_config import get_logger
+from .core.runtime import RuntimeProfile, RuntimeSettings, load_runtime_settings
+from .agent_models import EvidenceChunk, GroundedAnswer, HandoffContext, RetrievedEvidence, WorkbenchDiff
 from .content_security import ContentSecurityGateway
 from .core.project import ProjectManager
 from .core.secrets import resolve_secret
@@ -34,7 +35,11 @@ from .providers.llm_client import LLMClient
 from .providers.langchain_adapter import GeoChemChatModel
 from .services.execution_context import current_user_id, current_user_roles, user_execution_context
 from .services.model_access import resolve_user_model_grant
+from .semantic_retrieval import BgeM3EmbeddingProvider, EmbeddingProvider, EvidenceChunker, QdrantEvidenceStore
 from .workbench_service import WorkbenchService
+
+
+logger = get_logger("agent_service")
 
 
 def _now() -> str:
@@ -70,11 +75,43 @@ class AgentState(TypedDict, total=False):
 
 
 class RetrievalService:
-    """Materialise governed GeoChem evidence into an article-scoped FTS index."""
+    """Materialise and retrieve governed, article-scoped GeoChem evidence."""
 
-    def __init__(self, project_manager: ProjectManager):
+    def __init__(
+        self,
+        project_manager: ProjectManager,
+        runtime_settings: RuntimeSettings | None = None,
+        *,
+        embedding_provider: EmbeddingProvider | None = None,
+        vector_store: Any | None = None,
+    ):
         self.pm = project_manager
+        self.runtime = runtime_settings or load_runtime_settings()
         self.security = ContentSecurityGateway()
+        self.chunker = EvidenceChunker(max_tokens=self.runtime.embedding_max_tokens)
+        self._embedding_provider = embedding_provider
+        self._vector_store = vector_store
+
+    def _embedding(self) -> EmbeddingProvider:
+        if self._embedding_provider is None:
+            self._embedding_provider = BgeM3EmbeddingProvider(
+                self.runtime.embedding_model,
+                batch_size=self.runtime.embedding_batch_size,
+                max_tokens=self.runtime.embedding_max_tokens,
+                cache_dir=self.runtime.embedding_cache_dir,
+            )
+        return self._embedding_provider
+
+    def _vectors(self):
+        if self._vector_store is None:
+            provider = self._embedding()
+            self._vector_store = QdrantEvidenceStore(
+                self.runtime.qdrant_url,
+                self.runtime.qdrant_collection,
+                api_key=self.runtime.qdrant_api_key,
+                dimension=provider.dimension,
+            )
+        return self._vector_store
 
     def sync_article(self, project_id: str, article_id: str) -> dict[str, int]:
         db = self.pm.get_database(project_id)
@@ -83,9 +120,6 @@ class RetrievalService:
                 "SELECT document_id FROM retrieval_documents WHERE project_id=? AND article_id=?",
                 (project_id, article_id),
             )]
-            if old_ids:
-                db.executemany("DELETE FROM retrieval_fts WHERE document_id=?", [(doc_id,) for doc_id in old_ids])
-            db.execute("DELETE FROM retrieval_documents WHERE project_id=? AND article_id=?", (project_id, article_id))
             docs: list[dict[str, Any]] = []
             for row in db.fetch_all(
                 """SELECT e.*, r.file_name FROM document_elements e
@@ -101,7 +135,9 @@ class RetrievalService:
                     project_id, article_id, "element", body,
                     resource_id=element.get("resource_id", ""), element_id=element["element_id"],
                     metadata={"element_type": element.get("element_type"), "page_number": element.get("page_number"),
-                              "bbox": self._json(element.get("bbox_json"), []), "caption": element.get("caption", ""),
+                              "bbox": self._json(element.get("bbox_json"), []), "page_spans": self._json(element.get("page_spans_json"), []),
+                              "caption": element.get("caption", ""), "section_path": element.get("section_path", ""),
+                              "reading_order": element.get("reading_order", 0), "raw_table": self._json(element.get("raw_table_json"), {}),
                               "resource_name": element.get("file_name", "")},
                 ))
             for row in db.fetch_all(
@@ -148,8 +184,19 @@ class RetrievalService:
                 content = " | ".join(filter(None, [rule.get("rule_type", ""), rule.get("pattern", ""), rule.get("target_header", ""), rule.get("evidence", "")]))
                 docs.append(self._document(project_id, article_id, "rule", content, metadata={"rule_id": rule["rule_id"], "target_header": rule.get("target_header", ""), "scope": rule.get("scope", "")}))
             self._insert_documents(db, docs)
+            unique_docs = {str(doc["document_id"]): doc for doc in docs}
+            chunk_stats = self._sync_chunks(db, list(unique_docs.values()), project_id, article_id)
+            stale_document_ids = [document_id for document_id in old_ids if document_id not in unique_docs]
+            if stale_document_ids:
+                db.executemany("DELETE FROM retrieval_fts WHERE document_id=?", [(document_id,) for document_id in stale_document_ids])
+                db.executemany("DELETE FROM retrieval_documents WHERE document_id=?", [(document_id,) for document_id in stale_document_ids])
             db.commit()
-            return {"documents": len(docs), "elements": sum(d["document_type"] == "element" for d in docs), "cells": sum("cell" in d["document_type"] for d in docs)}
+            return {
+                "documents": len(unique_docs),
+                "elements": sum(d["document_type"] == "element" for d in unique_docs.values()),
+                "cells": sum("cell" in d["document_type"] for d in unique_docs.values()),
+                **chunk_stats,
+            }
         finally:
             db.close()
 
@@ -158,9 +205,163 @@ class RetrievalService:
         try:
             clause, params = ("project_id=? AND article_id=?", (project_id, article_id)) if article_id else ("project_id=?", (project_id,))
             rows = db.fetch_all(f"SELECT document_type, COUNT(*) AS count FROM retrieval_documents WHERE {clause} GROUP BY document_type", params)
-            return {"ready": bool(rows), "counts": {row["document_type"]: row["count"] for row in rows}}
+            chunk_row = db.fetch_one(
+                f"""SELECT COUNT(*) AS count,
+                           SUM(CASE WHEN vector_status='indexed' THEN 1 ELSE 0 END) AS indexed
+                    FROM retrieval_chunks WHERE {clause}""",
+                params,
+            ) or {"count": 0, "indexed": 0}
+            vector_ready = False
+            vector_error = ""
+            if self.runtime.vector_enabled:
+                try:
+                    vector_ready = bool(self._vectors().ready())
+                except Exception as exc:
+                    vector_error = str(exc)[:240]
+            return {
+                "ready": bool(rows),
+                "counts": {row["document_type"]: row["count"] for row in rows},
+                "chunks": int(chunk_row["count"] or 0),
+                "vector_indexed": int(chunk_row["indexed"] or 0),
+                "vector_enabled": self.runtime.vector_enabled,
+                "vector_ready": vector_ready,
+                "vector_error": vector_error,
+                "embedding_model": self.runtime.embedding_model,
+                "qdrant_collection": self.runtime.qdrant_collection,
+            }
         finally:
             db.close()
+
+    def _sync_chunks(
+        self,
+        db: Any,
+        documents: list[dict[str, Any]],
+        project_id: str,
+        article_id: str,
+    ) -> dict[str, int]:
+        chunks = self.chunker.build(documents)
+        unique_chunks = {chunk.chunk_id: chunk for chunk in chunks}
+        old_rows = {
+            str(row["chunk_id"]): dict(row)
+            for row in db.fetch_all(
+                "SELECT chunk_id, content_hash, embedding_model, embedding_version, vector_status FROM retrieval_chunks WHERE project_id=? AND article_id=?",
+                (project_id, article_id),
+            )
+        }
+        stale_ids = [chunk_id for chunk_id in old_rows if chunk_id not in unique_chunks]
+
+        for chunk in unique_chunks.values():
+            db.execute(
+                """INSERT INTO retrieval_chunks
+                   (chunk_id, parent_document_id, project_id, article_id, resource_id, element_id,
+                    record_id, cell_id, content, content_hash, element_type, page_number,
+                    page_spans_json, section_path, bbox_json, reading_order, metadata_json, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(chunk_id) DO UPDATE SET
+                     parent_document_id=excluded.parent_document_id, project_id=excluded.project_id,
+                     article_id=excluded.article_id, resource_id=excluded.resource_id,
+                     element_id=excluded.element_id, record_id=excluded.record_id,
+                     cell_id=excluded.cell_id, content=excluded.content,
+                     content_hash=excluded.content_hash, element_type=excluded.element_type,
+                     page_number=excluded.page_number, page_spans_json=excluded.page_spans_json,
+                     section_path=excluded.section_path, bbox_json=excluded.bbox_json,
+                     reading_order=excluded.reading_order, metadata_json=excluded.metadata_json,
+                     updated_at=excluded.updated_at""",
+                (
+                    chunk.chunk_id, chunk.parent_document_id, chunk.project_id, chunk.article_id,
+                    chunk.resource_id, chunk.element_id, chunk.record_id, chunk.cell_id,
+                    chunk.content, chunk.content_hash, chunk.element_type, chunk.page_number,
+                    json.dumps(chunk.page_spans, ensure_ascii=False), chunk.section_path,
+                    json.dumps(chunk.bbox, ensure_ascii=False), chunk.reading_order,
+                    json.dumps(chunk.metadata, ensure_ascii=False), _now(),
+                ),
+            )
+            db.execute("DELETE FROM retrieval_chunk_fts WHERE chunk_id=?", (chunk.chunk_id,))
+            db.execute(
+                "INSERT INTO retrieval_chunk_fts (chunk_id, content, project_id, article_id, element_type) VALUES (?, ?, ?, ?, ?)",
+                (chunk.chunk_id, chunk.content, chunk.project_id, chunk.article_id, chunk.element_type),
+            )
+        db.commit()
+
+        indexed = 0
+        reused = 0
+        failed = 0
+        deleted = 0
+        if self.runtime.vector_enabled:
+            try:
+                provider = self._embedding()
+                store = self._vectors()
+                if not store.ready():
+                    raise RuntimeError("Qdrant is not ready")
+                pending: list[EvidenceChunk] = []
+                for chunk in unique_chunks.values():
+                    old = old_rows.get(chunk.chunk_id) or {}
+                    if (
+                        old.get("content_hash") == chunk.content_hash
+                        and old.get("embedding_model") == self.runtime.embedding_model
+                        and old.get("embedding_version") == provider.model_version
+                        and old.get("vector_status") == "indexed"
+                    ):
+                        reused += 1
+                    else:
+                        pending.append(chunk)
+                batch_size = self.runtime.embedding_batch_size
+                for offset in range(0, len(pending), batch_size):
+                    batch = pending[offset: offset + batch_size]
+                    try:
+                        vectors = provider.embed_documents([chunk.content for chunk in batch])
+                        if len(vectors) != len(batch):
+                            raise RuntimeError("Embedding provider returned an unexpected vector count")
+                        store.upsert(batch, vectors)
+                        db.executemany(
+                            """UPDATE retrieval_chunks
+                               SET embedding_model=?, embedding_version=?, vector_point_id=?,
+                                   vector_status='indexed', vector_indexed_at=?, updated_at=?
+                               WHERE chunk_id=?""",
+                            [
+                                (
+                                    self.runtime.embedding_model, provider.model_version,
+                                    store.point_id(chunk.chunk_id), _now(), _now(), chunk.chunk_id,
+                                )
+                                for chunk in batch
+                            ],
+                        )
+                        db.commit()
+                        indexed += len(batch)
+                    except Exception as exc:
+                        failed += len(batch)
+                        db.executemany(
+                            "UPDATE retrieval_chunks SET vector_status='failed', updated_at=? WHERE chunk_id=?",
+                            [(_now(), chunk.chunk_id) for chunk in batch],
+                        )
+                        db.commit()
+                        logger.warning(f"Vector indexing batch failed: {exc}")
+                # Preserve the last known vectors when any replacement batch
+                # failed. A later successful run reconciles the remote article
+                # scope against the active relational chunk IDs.
+                if failed == 0:
+                    try:
+                        remote_ids = set(store.list_chunk_ids(project_id=project_id, article_id=article_id))
+                        cleanup_ids = sorted(remote_ids - set(unique_chunks))
+                        store.delete(cleanup_ids)
+                        deleted = len(cleanup_ids)
+                    except Exception as exc:
+                        logger.warning(f"Stale Qdrant point cleanup failed: {exc}")
+            except Exception as exc:
+                failed = len(unique_chunks)
+                logger.warning(f"Vector indexing unavailable; FTS remains active: {exc}")
+
+        if stale_ids:
+            db.executemany("DELETE FROM retrieval_chunk_fts WHERE chunk_id=?", [(chunk_id,) for chunk_id in stale_ids])
+            db.executemany("DELETE FROM retrieval_chunks WHERE chunk_id=?", [(chunk_id,) for chunk_id in stale_ids])
+            db.commit()
+        return {
+            "chunks": len(unique_chunks),
+            "vector_indexed": indexed,
+            "vector_reused": reused,
+            "vector_deleted": deleted,
+            "vector_failed": failed,
+        }
 
     def answer(self, project_id: str, article_id: str, question: str) -> dict[str, Any]:
         self.sync_article(project_id, article_id)
@@ -354,6 +555,186 @@ class RetrievalService:
         }
 
     def _search(self, project_id: str, article_id: str, query: str) -> list[dict[str, Any]]:
+        keyword = self.keyword_search_chunks(project_id, article_id, query, limit=30)
+        vector = self.vector_search_chunks(project_id, article_id, query, limit=30)
+        hybrid = self._rrf(keyword, vector, limit=12)
+        if hybrid:
+            return [self._retrieved_document(item) for item in hybrid]
+        return self._legacy_search(project_id, article_id, query)
+
+    def keyword_search_chunks(
+        self,
+        project_id: str,
+        article_id: str,
+        query: str,
+        *,
+        limit: int = 30,
+    ) -> list[RetrievedEvidence]:
+        tokens = [token for token in re.findall(r"[\w.%/‰δ-]+", query, re.UNICODE) if len(token) > 1]
+        if not tokens:
+            return []
+        match = " OR ".join(f'"{token.replace(chr(34), "")}"' for token in tokens[:10])
+        db = self.pm.get_database(project_id)
+        try:
+            if db.dialect == "postgresql":
+                rows = db.fetch_all(
+                    """SELECT c.* FROM retrieval_chunk_fts f JOIN retrieval_chunks c ON c.chunk_id=f.chunk_id
+                       WHERE f.project_id=? AND f.article_id=?
+                         AND to_tsvector('simple', COALESCE(f.content, '')) @@ websearch_to_tsquery('simple', ?)
+                       ORDER BY ts_rank_cd(to_tsvector('simple', COALESCE(f.content, '')), websearch_to_tsquery('simple', ?)) DESC
+                       LIMIT ?""",
+                    (project_id, article_id, " OR ".join(tokens[:10]), " OR ".join(tokens[:10]), limit),
+                )
+            else:
+                rows = db.fetch_all(
+                    """SELECT c.* FROM retrieval_chunk_fts f JOIN retrieval_chunks c ON c.chunk_id=f.chunk_id
+                       WHERE f.project_id=? AND f.article_id=? AND retrieval_chunk_fts MATCH ?
+                       ORDER BY bm25(retrieval_chunk_fts) LIMIT ?""",
+                    (project_id, article_id, match, limit),
+                )
+            return [
+                RetrievedEvidence(
+                    chunk=self._decode_chunk(dict(row)),
+                    retrieval_methods=["bm25"],
+                    bm25_rank=rank,
+                )
+                for rank, row in enumerate(rows, start=1)
+            ]
+        except Exception as exc:
+            logger.warning(f"Chunk FTS search failed; legacy FTS remains available: {exc}")
+            return []
+        finally:
+            db.close()
+
+    def vector_search_chunks(
+        self,
+        project_id: str,
+        article_id: str,
+        query: str,
+        *,
+        limit: int = 30,
+    ) -> list[RetrievedEvidence]:
+        if not self.runtime.vector_enabled:
+            return []
+        try:
+            store = self._vectors()
+            if not store.ready():
+                raise RuntimeError("Qdrant is not ready")
+            vector = self._embedding().embed_query(query)
+            matches = store.search(
+                vector,
+                project_id=project_id,
+                article_id=article_id,
+                limit=limit,
+            )
+        except Exception as exc:
+            logger.warning(f"Vector search unavailable; using FTS only: {exc}")
+            return []
+
+        db = self.pm.get_database(project_id)
+        try:
+            results: list[RetrievedEvidence] = []
+            for rank, match_item in enumerate(matches, start=1):
+                payload = match_item.get("payload") or {}
+                chunk_id = str(payload.get("chunk_id") or "")
+                if not chunk_id:
+                    continue
+                row = db.fetch_one(
+                    "SELECT * FROM retrieval_chunks WHERE chunk_id=? AND project_id=? AND article_id=?",
+                    (chunk_id, project_id, article_id),
+                )
+                if not row:
+                    continue
+                results.append(
+                    RetrievedEvidence(
+                        chunk=self._decode_chunk(dict(row)),
+                        retrieval_methods=["vector"],
+                        vector_rank=rank,
+                        vector_score=float(match_item.get("score") or 0.0),
+                    )
+                )
+            return results
+        finally:
+            db.close()
+
+    @staticmethod
+    def _rrf(
+        keyword: list[RetrievedEvidence],
+        vector: list[RetrievedEvidence],
+        *,
+        limit: int = 12,
+        k: int = 60,
+    ) -> list[RetrievedEvidence]:
+        merged: dict[str, RetrievedEvidence] = {}
+        for method, results in (("bm25", keyword), ("vector", vector)):
+            for rank, candidate in enumerate(results, start=1):
+                chunk_id = candidate.chunk.chunk_id
+                current = merged.get(chunk_id)
+                if current is None:
+                    current = candidate.model_copy(deep=True)
+                    current.rrf_score = 0.0
+                    merged[chunk_id] = current
+                current.rrf_score += 1.0 / (k + rank)
+                if method not in current.retrieval_methods:
+                    current.retrieval_methods.append(method)  # type: ignore[arg-type]
+                if method == "bm25":
+                    current.bm25_rank = rank
+                else:
+                    current.vector_rank = rank
+                    current.vector_score = candidate.vector_score
+        return sorted(merged.values(), key=lambda item: item.rrf_score, reverse=True)[:limit]
+
+    def _retrieved_document(self, item: RetrievedEvidence) -> dict[str, Any]:
+        chunk = item.chunk
+        metadata = {
+            **chunk.metadata,
+            "page_number": chunk.page_number,
+            "page_spans": chunk.page_spans,
+            "section_path": chunk.section_path,
+            "bbox": chunk.bbox,
+            "element_type": chunk.element_type,
+            "retrieval_methods": item.retrieval_methods,
+            "bm25_rank": item.bm25_rank,
+            "vector_rank": item.vector_rank,
+            "vector_score": item.vector_score,
+            "rrf_score": item.rrf_score,
+            "parent_document_id": chunk.parent_document_id,
+        }
+        return {
+            "document_id": chunk.chunk_id,
+            "project_id": chunk.project_id,
+            "article_id": chunk.article_id,
+            "document_type": metadata.get("parent_document_type") or chunk.element_type,
+            "resource_id": chunk.resource_id,
+            "element_id": chunk.element_id,
+            "record_id": chunk.record_id,
+            "cell_id": chunk.cell_id,
+            "content": chunk.content,
+            "metadata": metadata,
+        }
+
+    def _decode_chunk(self, row: dict[str, Any]) -> EvidenceChunk:
+        return EvidenceChunk(
+            chunk_id=str(row["chunk_id"]),
+            parent_document_id=str(row["parent_document_id"]),
+            project_id=str(row["project_id"]),
+            article_id=str(row.get("article_id") or ""),
+            resource_id=str(row.get("resource_id") or ""),
+            element_id=str(row.get("element_id") or ""),
+            record_id=str(row.get("record_id") or ""),
+            cell_id=str(row.get("cell_id") or ""),
+            content=str(row.get("content") or ""),
+            content_hash=str(row.get("content_hash") or ""),
+            element_type=str(row.get("element_type") or ""),
+            page_number=row.get("page_number"),
+            page_spans=self._json(row.get("page_spans_json"), []),
+            section_path=str(row.get("section_path") or ""),
+            bbox=self._json(row.get("bbox_json"), []),
+            reading_order=int(row.get("reading_order") or 0),
+            metadata=self._json(row.get("metadata_json"), {}),
+        )
+
+    def _legacy_search(self, project_id: str, article_id: str, query: str) -> list[dict[str, Any]]:
         tokens = [token for token in re.findall(r"[\w.%/‰δ-]+", query, re.UNICODE) if len(token) > 1]
         if not tokens:
             return []
@@ -369,16 +750,20 @@ class RetrievalService:
                        LIMIT 12""",
                     (project_id, article_id, " OR ".join(tokens[:10]), " OR ".join(tokens[:10])),
                 )
-                return [self._decode_document(dict(row)) for row in rows]
-            try:
-                rows = db.fetch_all(
-                    """SELECT d.* FROM retrieval_fts f JOIN retrieval_documents d ON d.document_id=f.document_id
-                       WHERE f.project_id=? AND f.article_id=? AND retrieval_fts MATCH ?
-                       ORDER BY bm25(retrieval_fts) LIMIT 12""", (project_id, article_id, match),
-                )
-            except sqlite3.OperationalError:
-                like = f"%{tokens[0]}%"
-                rows = db.fetch_all("SELECT * FROM retrieval_documents WHERE project_id=? AND article_id=? AND content LIKE ? LIMIT 12", (project_id, article_id, like))
+            else:
+                try:
+                    rows = db.fetch_all(
+                        """SELECT d.* FROM retrieval_fts f JOIN retrieval_documents d ON d.document_id=f.document_id
+                           WHERE f.project_id=? AND f.article_id=? AND retrieval_fts MATCH ?
+                           ORDER BY bm25(retrieval_fts) LIMIT 12""",
+                        (project_id, article_id, match),
+                    )
+                except sqlite3.OperationalError:
+                    like = f"%{tokens[0]}%"
+                    rows = db.fetch_all(
+                        "SELECT * FROM retrieval_documents WHERE project_id=? AND article_id=? AND content LIKE ? LIMIT 12",
+                        (project_id, article_id, like),
+                    )
             return [self._decode_document(dict(row)) for row in rows]
         finally:
             db.close()
@@ -897,7 +1282,7 @@ class ArticleCurationAgent:
         self.pm = project_manager or ProjectManager()
         self.runtime = runtime_settings or load_runtime_settings()
         self.workbench = WorkbenchService(self.pm)
-        self.rag = RetrievalService(self.pm)
+        self.rag = RetrievalService(self.pm, self.runtime)
         self.sources = OpenAccessResolver(self.pm)
         self.literature = LiteratureSearchService()
         self.tools = AgentToolRegistry(self.pm)

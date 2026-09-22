@@ -111,6 +111,39 @@ class EvidenceBundle(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class EvidenceChunk(BaseModel):
+    """A retrieval-sized, provenance-preserving slice of governed evidence."""
+
+    chunk_id: str
+    parent_document_id: str
+    project_id: str
+    article_id: str = ""
+    resource_id: str = ""
+    element_id: str = ""
+    record_id: str = ""
+    cell_id: str = ""
+    content: str
+    content_hash: str
+    element_type: str
+    page_number: int | None = None
+    page_spans: list[dict[str, Any]] = Field(default_factory=list)
+    section_path: str = ""
+    bbox: list[float] = Field(default_factory=list)
+    reading_order: int = 0
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class RetrievedEvidence(BaseModel):
+    """One hybrid-retrieval candidate with explainable ranking metadata."""
+
+    chunk: EvidenceChunk
+    retrieval_methods: list[Literal["bm25", "vector"]] = Field(default_factory=list)
+    bm25_rank: int | None = None
+    vector_rank: int | None = None
+    vector_score: float | None = None
+    rrf_score: float = 0.0
+
+
 class GroundedAnswer(BaseModel):
     answer: str
     citations: list[dict[str, Any]] = Field(default_factory=list)

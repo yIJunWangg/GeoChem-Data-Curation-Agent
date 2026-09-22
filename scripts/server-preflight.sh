@@ -154,6 +154,7 @@ else
   # shellcheck disable=SC1090
   source "$ENV_FILE"
   set +a
+  QDRANT_DATA_PATH="${QDRANT_DATA_PATH:-/srv/geochem/qdrant}"
 
   secret_names=(
     POSTGRES_SUPERUSER_PASSWORD GEOCHEM_DB_PASSWORD KEYCLOAK_DB_PASSWORD
@@ -189,7 +190,7 @@ else
     fi
   fi
 
-  for path_name in GEOCHEM_DATA_PATH POSTGRES_DATA_PATH REDIS_DATA_PATH CADDY_DATA_PATH CADDY_CONFIG_PATH; do
+  for path_name in GEOCHEM_DATA_PATH POSTGRES_DATA_PATH REDIS_DATA_PATH QDRANT_DATA_PATH CADDY_DATA_PATH CADDY_CONFIG_PATH; do
     path_value="${!path_name:-}"
     if [[ "$path_value" == /* ]]; then
       pass "$path_name uses an absolute path"

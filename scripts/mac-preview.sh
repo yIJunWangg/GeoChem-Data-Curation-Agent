@@ -23,6 +23,7 @@ export GEOCHEM_PROFILE=development
 export GEOCHEM_HOST="${GEOCHEM_HOST:-127.0.0.1}"
 export GEOCHEM_PORT="${GEOCHEM_PORT:-8765}"
 export GEOCHEM_OPEN_BROWSER="${GEOCHEM_OPEN_BROWSER:-true}"
+export GEOCHEM_VECTOR_ENABLED="${GEOCHEM_VECTOR_ENABLED:-true}"
 
 preview_url="http://127.0.0.1:${GEOCHEM_PORT}"
 health_payload="$(curl --fail --silent --max-time 2 "$preview_url/api/v1/health" 2>/dev/null || true)"

@@ -21,11 +21,15 @@ def schema_table_order() -> list[str]:
     """Return canonical application tables in foreign-key-friendly order."""
 
     tables = list(dict.fromkeys(_TABLE_PATTERN.findall(SCHEMA_SQL)))
-    # SQLite declares this one as an FTS virtual table; PostgreSQL materializes
-    # the same two columns and indexes them with tsvector.
-    if "retrieval_fts" not in tables:
-        anchor = tables.index("retrieval_documents") + 1
-        tables.insert(anchor, "retrieval_fts")
+    # SQLite declares these as FTS virtual tables; PostgreSQL materializes them
+    # as ordinary tables with tsvector GIN indexes.
+    for table, parent in (
+        ("retrieval_fts", "retrieval_documents"),
+        ("retrieval_chunk_fts", "retrieval_chunks"),
+    ):
+        if table not in tables:
+            anchor = tables.index(parent) + 1
+            tables.insert(anchor, table)
     return tables
 
 

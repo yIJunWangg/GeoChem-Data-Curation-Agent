@@ -130,23 +130,31 @@ def postgres_schema_statements(schema_sql: str) -> list[str]:
     statements: list[str] = []
     foreign_keys: list[tuple[str, str, str, str]] = []
     for raw in _split_sql_script(schema_sql):
-        if "CREATE VIRTUAL TABLE IF NOT EXISTS retrieval_fts" in raw:
+        virtual_match = re.search(
+            r"CREATE VIRTUAL TABLE IF NOT EXISTS (retrieval_fts|retrieval_chunk_fts)",
+            raw,
+            flags=re.IGNORECASE,
+        )
+        if virtual_match:
+            virtual_table = virtual_match.group(1)
+            id_column = "document_id" if virtual_table == "retrieval_fts" else "chunk_id"
+            type_column = "document_type" if virtual_table == "retrieval_fts" else "element_type"
             statements.append(
-                """CREATE TABLE IF NOT EXISTS retrieval_fts (
-                    document_id TEXT PRIMARY KEY,
+                f"""CREATE TABLE IF NOT EXISTS {virtual_table} (
+                    {id_column} TEXT PRIMARY KEY,
                     content TEXT NOT NULL DEFAULT '',
                     project_id TEXT NOT NULL DEFAULT '',
                     article_id TEXT NOT NULL DEFAULT '',
-                    document_type TEXT NOT NULL DEFAULT ''
+                    {type_column} TEXT NOT NULL DEFAULT ''
                 )"""
             )
             statements.append(
-                "CREATE INDEX IF NOT EXISTS idx_retrieval_fts_scope "
-                "ON retrieval_fts(project_id, article_id, document_type)"
+                f"CREATE INDEX IF NOT EXISTS idx_{virtual_table}_scope "
+                f"ON {virtual_table}(project_id, article_id, {type_column})"
             )
             statements.append(
-                "CREATE INDEX IF NOT EXISTS idx_retrieval_fts_content "
-                "ON retrieval_fts USING GIN (to_tsvector('simple', content))"
+                f"CREATE INDEX IF NOT EXISTS idx_{virtual_table}_content "
+                f"ON {virtual_table} USING GIN (to_tsvector('simple', content))"
             )
             continue
 

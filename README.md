@@ -94,6 +94,24 @@ The React + FastAPI application is the sole graphical interface. The explicit
 `.venv/bin/geochem-web` command starts the same Web service; `geochem-ui` is
 kept as a backwards-compatible alias.
 
+### Enable local semantic retrieval
+
+Vector retrieval is optional and falls back to the existing FTS index when it
+is disabled or unavailable. Install the local BGE-M3/Qdrant dependencies and
+start Qdrant before enabling it:
+
+```bash
+.venv/bin/pip install -e ".[vector]"
+docker compose -f deploy/docker-compose.qdrant.yml up -d
+export GEOCHEM_VECTOR_ENABLED=true
+bash scripts/mac-preview.sh
+```
+
+Qdrant is available at `http://127.0.0.1:6333`; its local data lives in the
+ignored `.qdrant/` directory. The first semantic indexing run downloads the
+BGE-M3 model. Stop the local vector service with
+`docker compose -f deploy/docker-compose.qdrant.yml down`.
+
 ### Deploy for a LAN team
 
 The production profile uses PostgreSQL, Redis/Celery, Keycloak, Caddy and

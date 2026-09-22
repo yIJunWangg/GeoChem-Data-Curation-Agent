@@ -68,7 +68,7 @@ done
 dump_set_name="$(basename "$restored_dump_dir")"
 
 compose=(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE")
-"${compose[@]}" stop caddy web worker keycloak redis
+"${compose[@]}" stop caddy web worker keycloak redis qdrant
 
 rsync -a --delete "$restored_data/" "$GEOCHEM_DATA_PATH/"
 [[ -d "$restored_caddy_data" ]] && rsync -a --delete "$restored_caddy_data/" "$CADDY_DATA_PATH/"

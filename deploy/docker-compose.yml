@@ -27,6 +27,14 @@ x-geochem-environment: &geochem-environment
   GEOCHEM_CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
   GEOCHEM_CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD}@redis:6379/1
   GEOCHEM_TASK_BACKEND: celery
+  GEOCHEM_VECTOR_ENABLED: "${GEOCHEM_VECTOR_ENABLED:-true}"
+  GEOCHEM_QDRANT_URL: http://qdrant:6333
+  GEOCHEM_QDRANT_API_KEY: ${GEOCHEM_QDRANT_API_KEY:-}
+  GEOCHEM_QDRANT_COLLECTION: ${GEOCHEM_QDRANT_COLLECTION:-geochem_evidence_v1}
+  GEOCHEM_EMBEDDING_MODEL: ${GEOCHEM_EMBEDDING_MODEL:-BAAI/bge-m3}
+  GEOCHEM_EMBEDDING_BATCH_SIZE: ${GEOCHEM_EMBEDDING_BATCH_SIZE:-8}
+  GEOCHEM_EMBEDDING_MAX_TOKENS: ${GEOCHEM_EMBEDDING_MAX_TOKENS:-512}
+  GEOCHEM_EMBEDDING_CACHE_DIR: /data/model-cache
   GEOCHEM_WORKER_CONCURRENCY: ${GEOCHEM_WORKER_CONCURRENCY:-2}
   GEOCHEM_TASK_TIME_LIMIT_SECONDS: ${GEOCHEM_TASK_TIME_LIMIT_SECONDS:-7200}
   GEOCHEM_TASK_SOFT_TIME_LIMIT_SECONDS: ${GEOCHEM_TASK_SOFT_TIME_LIMIT_SECONDS:-6900}
@@ -67,6 +75,8 @@ x-geochem-service: &geochem-service
   build:
     context: ..
     dockerfile: Dockerfile
+    args:
+      GEOCHEM_INSTALL_VECTOR: "${GEOCHEM_INSTALL_VECTOR:-true}"
   environment: *geochem-environment
   volumes:
     - ${GEOCHEM_DATA_PATH:-/srv/geochem/data}:/data
@@ -116,6 +126,23 @@ services:
       - ${REDIS_DATA_PATH:-/srv/geochem/redis}:/data
     healthcheck:
       test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks:
+      - geochem-internal
+
+  qdrant:
+    image: qdrant/qdrant:v1.15.4
+    restart: unless-stopped
+    stop_grace_period: 1m
+    logging: *default-logging
+    environment:
+      QDRANT__SERVICE__API_KEY: ${GEOCHEM_QDRANT_API_KEY:-}
+    volumes:
+      - ${QDRANT_DATA_PATH:-/srv/geochem/qdrant}:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333; printf \"GET /healthz HTTP/1.0\\r\\n\\r\\n\" >&3; grep -q \"200 OK\" <&3'"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -188,6 +215,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      qdrant:
+        condition: service_healthy
       keycloak:
         condition: service_healthy
 
@@ -205,6 +234,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      qdrant:
         condition: service_healthy
       keycloak:
         condition: service_healthy

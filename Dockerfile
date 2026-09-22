@@ -22,6 +22,7 @@ RUN python -m pip wheel --wheel-dir /wheels .
 
 FROM python:3.12-slim-bookworm AS runtime
 ARG PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cpu
+ARG GEOCHEM_INSTALL_VECTOR=false
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -45,6 +46,7 @@ RUN apt-get update \
 WORKDIR /app
 COPY --from=python-builder /wheels /wheels
 RUN python -m pip install /wheels/* \
+    && if [ "$GEOCHEM_INSTALL_VECTOR" = "true" ]; then python -m pip install "FlagEmbedding>=1.3,<2" "qdrant-client>=1.12,<2"; fi \
     && rm -rf /wheels
 COPY alembic.ini ./
 COPY migrations/ ./migrations/

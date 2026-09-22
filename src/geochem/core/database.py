@@ -936,12 +936,49 @@ CREATE TABLE IF NOT EXISTS retrieval_documents (
     FOREIGN KEY (project_id) REFERENCES projects(project_id)
 );
 
+CREATE TABLE IF NOT EXISTS retrieval_chunks (
+    chunk_id TEXT PRIMARY KEY,
+    parent_document_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    article_id TEXT DEFAULT '',
+    resource_id TEXT DEFAULT '',
+    element_id TEXT DEFAULT '',
+    record_id TEXT DEFAULT '',
+    cell_id TEXT DEFAULT '',
+    content TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    element_type TEXT NOT NULL,
+    page_number INTEGER,
+    page_spans_json TEXT DEFAULT '[]',
+    section_path TEXT DEFAULT '',
+    bbox_json TEXT DEFAULT '[]',
+    reading_order INTEGER DEFAULT 0,
+    metadata_json TEXT DEFAULT '{}',
+    embedding_model TEXT DEFAULT '',
+    embedding_version TEXT DEFAULT '',
+    vector_point_id TEXT DEFAULT '',
+    vector_status TEXT DEFAULT 'pending',
+    vector_indexed_at TEXT,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (parent_document_id) REFERENCES retrieval_documents(document_id),
+    FOREIGN KEY (project_id) REFERENCES projects(project_id)
+);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS retrieval_fts USING fts5(
     document_id UNINDEXED,
     content,
     project_id UNINDEXED,
     article_id UNINDEXED,
     document_type UNINDEXED,
+    tokenize='unicode61'
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS retrieval_chunk_fts USING fts5(
+    chunk_id UNINDEXED,
+    content,
+    project_id UNINDEXED,
+    article_id UNINDEXED,
+    element_type UNINDEXED,
     tokenize='unicode61'
 );
 
@@ -1146,6 +1183,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_events_run ON agent_run_events(run_id, even
 CREATE INDEX IF NOT EXISTS idx_agent_tool_calls_run ON agent_tool_calls(run_id, started_at);
 CREATE INDEX IF NOT EXISTS idx_literature_results_search ON literature_search_results(search_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_retrieval_documents_scope ON retrieval_documents(project_id, article_id, document_type);
+CREATE INDEX IF NOT EXISTS idx_retrieval_chunks_scope ON retrieval_chunks(project_id, article_id, element_type);
+CREATE INDEX IF NOT EXISTS idx_retrieval_chunks_parent ON retrieval_chunks(parent_document_id);
+CREATE INDEX IF NOT EXISTS idx_retrieval_chunks_vector ON retrieval_chunks(project_id, article_id, vector_status);
 """
 
 

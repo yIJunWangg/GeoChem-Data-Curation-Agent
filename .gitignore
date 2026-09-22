@@ -26,6 +26,7 @@ tests/奥陶纪地化数据*.xlsx
 .DS_Store
 geochem-data/
 output/
+.qdrant/
 .env
 deploy/.env
 deploy/capacity-report.json

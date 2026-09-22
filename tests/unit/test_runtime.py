@@ -36,6 +36,29 @@ def test_development_environment_overrides():
     assert settings.build_id == "preview-a1b2c3"
 
 
+def test_vector_environment_overrides(tmp_path):
+    cache_dir = tmp_path / "models"
+    settings = load_runtime_settings({
+        "GEOCHEM_VECTOR_ENABLED": "true",
+        "GEOCHEM_QDRANT_URL": "http://qdrant.test:6333",
+        "GEOCHEM_QDRANT_API_KEY": "vector-secret",
+        "GEOCHEM_QDRANT_COLLECTION": "evidence_test",
+        "GEOCHEM_EMBEDDING_MODEL": "BAAI/bge-m3-test",
+        "GEOCHEM_EMBEDDING_BATCH_SIZE": "4",
+        "GEOCHEM_EMBEDDING_MAX_TOKENS": "768",
+        "GEOCHEM_EMBEDDING_CACHE_DIR": str(cache_dir),
+    })
+
+    assert settings.vector_enabled is True
+    assert settings.qdrant_url == "http://qdrant.test:6333"
+    assert settings.qdrant_api_key == "vector-secret"
+    assert settings.qdrant_collection == "evidence_test"
+    assert settings.embedding_model == "BAAI/bge-m3-test"
+    assert settings.embedding_batch_size == 4
+    assert settings.embedding_max_tokens == 768
+    assert settings.embedding_cache_dir == cache_dir
+
+
 def test_production_requires_shared_infrastructure_and_oidc():
     with pytest.raises(ValueError, match="GEOCHEM_DATABASE_URL"):
         load_runtime_settings({"GEOCHEM_PROFILE": "production"})

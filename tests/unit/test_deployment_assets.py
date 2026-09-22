@@ -231,7 +231,7 @@ def test_restore_validates_snapshot_before_stopping_services_and_verifies_result
     restore = (ROOT / "scripts" / "restore-server.sh").read_text(encoding="utf-8")
 
     dump_validation = restore.index("Snapshot database dump is missing or empty")
-    stop_services = restore.index('stop caddy web worker keycloak redis')
+    stop_services = restore.index('stop caddy web worker keycloak redis qdrant')
     assert dump_validation < stop_services
     assert "geochem-restore.lock" in restore
     assert "configure-keycloak-client.sh" in restore

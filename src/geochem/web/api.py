@@ -1651,15 +1651,15 @@ def create_app(
 
     @app.get("/api/v1/rag/status")
     def rag_status(project_id: str, article_id: str = ""):
-        return RetrievalService(pm).status(project_id, article_id)
+        return RetrievalService(pm, runtime).status(project_id, article_id)
 
     @app.post("/api/v1/rag/reindex")
     def rag_reindex(project_id: str, article_id: str):
-        return RetrievalService(pm).sync_article(project_id, article_id)
+        return RetrievalService(pm, runtime).sync_article(project_id, article_id)
 
     @app.post("/api/v1/rag/query")
     def rag_query(request: RagQueryRequest):
-        retrieval = RetrievalService(pm)
+        retrieval = RetrievalService(pm, runtime)
         if request.mode == "statistics":
             return retrieval.statistics(request.project_id, request.article_id, request.field, request.operation)
         return retrieval.answer(request.project_id, request.article_id, request.question)

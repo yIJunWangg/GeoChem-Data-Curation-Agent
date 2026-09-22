@@ -45,6 +45,15 @@ class RuntimeSettings(BaseModel):
     celery_result_backend: str = ""
     task_backend: str = "local"
 
+    vector_enabled: bool = False
+    qdrant_url: str = "http://127.0.0.1:6333"
+    qdrant_api_key: str = ""
+    qdrant_collection: str = "geochem_evidence_v1"
+    embedding_model: str = "BAAI/bge-m3"
+    embedding_batch_size: int = Field(default=8, ge=1, le=128)
+    embedding_max_tokens: int = Field(default=512, ge=64, le=8192)
+    embedding_cache_dir: Path | None = None
+
     auth_mode: str = "disabled"
     oidc_issuer_url: str = ""
     oidc_jwks_url: str = ""
@@ -183,6 +192,18 @@ def load_runtime_settings(environ: Mapping[str, str] | None = None) -> RuntimeSe
         task_backend=env.get(
             "GEOCHEM_TASK_BACKEND", "celery" if server_profile else "local"
         ).strip().lower(),
+        vector_enabled=_bool(env.get("GEOCHEM_VECTOR_ENABLED"), False),
+        qdrant_url=env.get("GEOCHEM_QDRANT_URL", "http://127.0.0.1:6333").strip(),
+        qdrant_api_key=_secret_value(env, "GEOCHEM_QDRANT_API_KEY"),
+        qdrant_collection=env.get("GEOCHEM_QDRANT_COLLECTION", "geochem_evidence_v1").strip(),
+        embedding_model=env.get("GEOCHEM_EMBEDDING_MODEL", "BAAI/bge-m3").strip(),
+        embedding_batch_size=int(env.get("GEOCHEM_EMBEDDING_BATCH_SIZE", "8")),
+        embedding_max_tokens=int(env.get("GEOCHEM_EMBEDDING_MAX_TOKENS", "512")),
+        embedding_cache_dir=(
+            Path(env["GEOCHEM_EMBEDDING_CACHE_DIR"]).expanduser()
+            if env.get("GEOCHEM_EMBEDDING_CACHE_DIR", "").strip()
+            else None
+        ),
         auth_mode=env.get("GEOCHEM_AUTH_MODE", "oidc" if server_profile else "disabled").strip().lower(),
         oidc_issuer_url=env.get("GEOCHEM_OIDC_ISSUER_URL", "").strip(),
         oidc_jwks_url=env.get("GEOCHEM_OIDC_JWKS_URL", "").strip(),

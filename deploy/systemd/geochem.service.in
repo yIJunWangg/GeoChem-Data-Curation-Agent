@@ -16,7 +16,7 @@ ExecStartPre=@DOCKER_BIN@ compose --env-file "@GEOCHEM_ENV_FILE@" -f "@GEOCHEM_C
 ExecStart=@DOCKER_BIN@ compose --env-file "@GEOCHEM_ENV_FILE@" -f "@GEOCHEM_COMPOSE_FILE@" up -d --wait --wait-timeout 360
 ExecStartPost="@GEOCHEM_ROOT@/scripts/server-verify.sh"
 ExecReload="@GEOCHEM_ROOT@/scripts/server-deploy.sh" --production --skip-build
-ExecStop=-@DOCKER_BIN@ compose --env-file "@GEOCHEM_ENV_FILE@" -f "@GEOCHEM_COMPOSE_FILE@" stop caddy web worker keycloak redis postgres
+ExecStop=-@DOCKER_BIN@ compose --env-file "@GEOCHEM_ENV_FILE@" -f "@GEOCHEM_COMPOSE_FILE@" stop caddy web worker keycloak redis qdrant postgres
 TimeoutStartSec=20min
 TimeoutStopSec=15min
 

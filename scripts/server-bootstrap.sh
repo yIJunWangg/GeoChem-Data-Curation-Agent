@@ -56,6 +56,7 @@ set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 set +a
+QDRANT_DATA_PATH="${QDRANT_DATA_PATH:-/srv/geochem/qdrant}"
 
 for path in \
   "$GEOCHEM_DATA_PATH/config" \
@@ -64,6 +65,7 @@ for path in \
   "$GEOCHEM_DATA_PATH/backups/postgres" \
   "$POSTGRES_DATA_PATH" \
   "$REDIS_DATA_PATH" \
+  "$QDRANT_DATA_PATH" \
   "$CADDY_DATA_PATH" \
   "$CADDY_CONFIG_PATH"; do
   sudo mkdir -p "$path"
@@ -72,6 +74,7 @@ done
 # The application image runs with a stable non-root uid. Database, Redis and
 # Caddy entrypoints retain ownership of their own host directories.
 sudo chown -R 10001:10001 "$GEOCHEM_DATA_PATH"
+sudo chown -R 1000:1000 "$QDRANT_DATA_PATH"
 
 if [[ ! -f "$RESTIC_PASSWORD_FILE" ]]; then
   sudo mkdir -p "$(dirname "$RESTIC_PASSWORD_FILE")"
