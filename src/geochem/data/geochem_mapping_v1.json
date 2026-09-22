@@ -1,0 +1,182 @@
+{
+  "version": "2026.08.1",
+  "name": "GeoChem core mapping vocabulary",
+  "sources": [
+    {
+      "id": "earthchem",
+      "name": "EarthChem Recommended Vocabularies",
+      "url": "https://earthchem.org/ecl/vocabularies",
+      "license": "Source-specific open vocabulary terms"
+    },
+    {
+      "id": "onegeochemistry",
+      "name": "OneGeochemistry",
+      "url": "https://onegeochemistry.github.io/",
+      "license": "Community standards metadata"
+    },
+    {
+      "id": "odm2",
+      "name": "ODM2 Controlled Vocabularies",
+      "url": "https://github.com/ODM2/ODM2ControlledVocabularies",
+      "license": "BSD-3-Clause"
+    },
+    {
+      "id": "nerc-s27",
+      "name": "NERC Chemical Substances S27",
+      "url": "https://vocab.nerc.ac.uk/collection/S27/current/",
+      "license": "CC BY 4.0"
+    },
+    {
+      "id": "ucum",
+      "name": "Unified Code for Units of Measure",
+      "url": "https://ucum.org/docs/artifacts",
+      "license": "UCUM terms of use"
+    }
+  ],
+  "concepts": [
+    {
+      "concept_id": "sample_id",
+      "canonical_name": "SampleID",
+      "concept_type": "sample_metadata",
+      "chemical_form": "identifier",
+      "unit_dimension": "none",
+      "allowed_units": [],
+      "contexts": ["sample", "specimen"],
+      "forbidden_forms": ["row_number", "serial_index"],
+      "source_references": ["earthchem", "odm2"],
+      "terms": ["SampleID", "sample id", "sample no", "sample no.", "sample number", "sample name", "specimen", "specimen id"]
+    },
+    {
+      "concept_id": "toc",
+      "canonical_name": "TOC",
+      "concept_type": "aggregate_measurement",
+      "chemical_form": "total_organic_carbon",
+      "unit_dimension": "mass_fraction",
+      "allowed_units": ["%", "wt%", "ppm"],
+      "contexts": ["organic carbon", "bulk sample"],
+      "forbidden_forms": ["tic", "total_carbon"],
+      "source_references": ["earthchem", "onegeochemistry", "ucum"],
+      "terms": ["TOC", "total organic carbon", "organic carbon"]
+    },
+    {
+      "concept_id": "total_sulfur",
+      "canonical_name": "TS",
+      "concept_type": "aggregate_measurement",
+      "chemical_form": "total_sulfur",
+      "unit_dimension": "mass_fraction",
+      "allowed_units": ["%", "wt%", "ppm"],
+      "contexts": ["bulk sample", "sulfur"],
+      "forbidden_forms": ["sulfate_sulfur", "pyrite_sulfur"],
+      "source_references": ["earthchem", "nerc-s27", "ucum"],
+      "terms": ["TS", "total sulfur", "total sulphur"]
+    },
+    {
+      "concept_id": "total_nitrogen",
+      "canonical_name": "TN",
+      "concept_type": "aggregate_measurement",
+      "chemical_form": "total_nitrogen",
+      "unit_dimension": "mass_fraction",
+      "allowed_units": ["%", "wt%", "ppm"],
+      "contexts": ["bulk sample", "nitrogen"],
+      "forbidden_forms": ["nitrate_nitrogen"],
+      "source_references": ["earthchem", "nerc-s27", "ucum"],
+      "terms": ["TN", "total nitrogen"]
+    },
+    {
+      "concept_id": "element_k",
+      "canonical_name": "K",
+      "concept_type": "element",
+      "chemical_form": "element:K",
+      "unit_dimension": "mass_fraction",
+      "allowed_units": ["%", "wt%", "ppm", "ppb"],
+      "contexts": ["potassium", "elemental concentration"],
+      "forbidden_forms": ["oxide:K2O"],
+      "source_references": ["nerc-s27", "ucum"],
+      "terms": ["K", "potassium", "elemental potassium"]
+    },
+    {
+      "concept_id": "oxide_k2o",
+      "canonical_name": "K2O",
+      "concept_type": "oxide",
+      "chemical_form": "oxide:K2O",
+      "unit_dimension": "mass_fraction",
+      "allowed_units": ["%", "wt%", "ppm"],
+      "contexts": ["major oxide", "whole rock"],
+      "forbidden_forms": ["element:K"],
+      "source_references": ["earthchem", "nerc-s27", "ucum"],
+      "terms": ["K2O", "potassium oxide"]
+    },
+    {
+      "concept_id": "oxide_sio2",
+      "canonical_name": "SiO2",
+      "concept_type": "oxide",
+      "chemical_form": "oxide:SiO2",
+      "unit_dimension": "mass_fraction",
+      "allowed_units": ["%", "wt%", "ppm"],
+      "contexts": ["major oxide", "whole rock", "silica"],
+      "forbidden_forms": ["element:Si"],
+      "source_references": ["earthchem", "nerc-s27", "ucum"],
+      "terms": ["SiO2", "silica", "silicon dioxide"]
+    },
+    {
+      "concept_id": "oxide_al2o3",
+      "canonical_name": "Al2O3",
+      "concept_type": "oxide",
+      "chemical_form": "oxide:Al2O3",
+      "unit_dimension": "mass_fraction",
+      "allowed_units": ["%", "wt%", "ppm"],
+      "contexts": ["major oxide", "whole rock", "alumina"],
+      "forbidden_forms": ["element:Al"],
+      "source_references": ["earthchem", "nerc-s27", "ucum"],
+      "terms": ["Al2O3", "alumina", "aluminium oxide", "aluminum oxide"]
+    },
+    {
+      "concept_id": "oxide_feo",
+      "canonical_name": "FeO",
+      "concept_type": "oxide",
+      "chemical_form": "oxide:FeO",
+      "unit_dimension": "mass_fraction",
+      "allowed_units": ["%", "wt%", "ppm"],
+      "contexts": ["major oxide", "ferrous iron"],
+      "forbidden_forms": ["oxide:Fe2O3", "element:Fe"],
+      "source_references": ["earthchem", "nerc-s27", "ucum"],
+      "terms": ["FeO", "ferrous oxide", "iron(ii) oxide"]
+    },
+    {
+      "concept_id": "oxide_fe2o3",
+      "canonical_name": "Fe2O3",
+      "concept_type": "oxide",
+      "chemical_form": "oxide:Fe2O3",
+      "unit_dimension": "mass_fraction",
+      "allowed_units": ["%", "wt%", "ppm"],
+      "contexts": ["major oxide", "ferric iron"],
+      "forbidden_forms": ["oxide:FeO", "element:Fe"],
+      "source_references": ["earthchem", "nerc-s27", "ucum"],
+      "terms": ["Fe2O3", "ferric oxide", "iron(iii) oxide"]
+    },
+    {
+      "concept_id": "isotope_delta13c",
+      "canonical_name": "delta13C",
+      "concept_type": "isotope_delta",
+      "chemical_form": "isotope_delta:13C",
+      "unit_dimension": "isotope_delta",
+      "allowed_units": ["permil", "ppt"],
+      "contexts": ["carbon isotope", "isotope delta"],
+      "forbidden_forms": ["element:C", "ratio:13C/12C"],
+      "source_references": ["earthchem", "onegeochemistry", "ucum"],
+      "terms": ["delta13C", "d13C", "13C delta", "carbon-13 delta"]
+    },
+    {
+      "concept_id": "ratio_87sr_86sr",
+      "canonical_name": "87Sr/86Sr",
+      "concept_type": "isotope_ratio",
+      "chemical_form": "ratio:87Sr/86Sr",
+      "unit_dimension": "dimensionless",
+      "allowed_units": ["1", "ratio"],
+      "contexts": ["strontium isotope", "isotope ratio"],
+      "forbidden_forms": ["element:Sr"],
+      "source_references": ["earthchem", "onegeochemistry", "nerc-s27"],
+      "terms": ["87Sr/86Sr", "87Sr 86Sr", "strontium isotope ratio"]
+    }
+  ]
+}

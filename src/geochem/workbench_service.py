@@ -16,6 +16,7 @@ from .core.project import ProjectManager
 from .core.runtime import RuntimeProfile, load_runtime_settings
 from .curation.resource_scoring import ResourceScoringEngine
 from .curation.target_headers import classify_field
+from .mapping_knowledge import MappingKnowledgeService
 from .providers.llm_client import LLMClient
 
 
@@ -80,7 +81,13 @@ class WorkbenchService:
                 pass
         return [], "json_invalid"
 
-    def _llm_mapping_is_safe(self, source: str, target: dict[str, Any], source_context: dict[str, Any]) -> bool:
+    def _llm_mapping_is_safe(
+        self,
+        source: str,
+        target: dict[str, Any],
+        source_context: dict[str, Any],
+        knowledge: MappingKnowledgeService | None = None,
+    ) -> bool:
         """Keep LLM suggestions conservative when an obvious table role disagrees."""
         profile = self._source_header_profile(source)
         source_text = f"{source} {profile['field_token']}".lower()
@@ -92,6 +99,10 @@ class WorkbenchService:
                 return False
         if re.fullmatch(r"(?:no\.?|number|index|serial)", profile["field_token"].lower()):
             return False
+        if knowledge:
+            validation = knowledge.validate_mapping(source, profile, target)
+            if validation["known"] and not validation["safe"]:
+                return False
         return True
 
     def ensure_session(self, project_id: str, article_id: str) -> dict[str, Any]:
@@ -1173,6 +1184,7 @@ class WorkbenchService:
         headers = self.target_headers(project_id, article_id)
         alias_rules = self._pre_extraction_alias_rules(project_id, article_id, headers)
         alias_rule_ids = self._pre_extraction_alias_rule_ids(project_id, article_id, headers)
+        advisory_rules = self._pre_extraction_advisory_rules(project_id, article_id, headers)
         elements = [
             item for item in self.list_elements(project_id, article_id)
             if item.get("selected") and item.get("element_type") == "table"
@@ -1180,79 +1192,138 @@ class WorkbenchService:
         suggestions: list[dict[str, Any]] = []
         seen: set[tuple[str, str]] = set()
         sample_header = self._sample_header(headers)
-        for element in elements:
-            raw = element.get("raw_table") or {}
-            source_headers = [str(value).strip() for value in raw.get("headers") or [] if str(value).strip()]
-            if not source_headers and raw.get("body_text"):
-                source_headers = self._source_header_tokens(str(raw.get("body_text") or ""))[:40]
-            mapped = self._map_source_headers(source_headers, headers, alias_rules)
-            for source, target in mapped:
-                key = (element["element_id"], self._norm(source))
-                if key in seen:
-                    continue
-                seen.add(key)
-                norm = self._norm(source)
-                if norm == "specimen" and target == source:
-                    target = sample_header
-                matched_by_user_rule = norm in alias_rules
-                matched_by_builtin_sample = target == sample_header and norm in {"sample", "sampleno", "samplenumber", "samplename", "sampleid", "specimen"}
-                profile = self._source_header_profile(source)
-                leaf_norm = self._norm(profile["field_token"])
-                leaf_exact_header = next((
-                    h for h in headers
-                    if leaf_norm and (
-                        self._norm(h["display_header"]) == leaf_norm
-                        or self._norm(h["canonical_field"]) == leaf_norm
-                    )
-                ), None)
-                exact_header = next((
-                    h for h in headers
-                    if self._norm(h["display_header"]) == norm or self._norm(h["canonical_field"]) == norm
-                ), None)
-                # `_map_source_headers` intentionally falls back to the raw
-                # source label when it cannot find a target.  Do not use
-                # `target != source` as the match signal here: a target display
-                # header can legitimately be identical to its raw header
-                # (SiO2 -> SiO2).  That used to clear a valid mapping in the UI.
-                matched_target = next((h for h in headers if h["display_header"] == target), None)
-                exact = bool(exact_header and target == exact_header["display_header"])
-                confidence = 0.35
-                reason = "未发现明确目标表头，需要人工确认"
-                if matched_by_user_rule:
-                    confidence = 0.96
-                    reason = "命中已确认规则记忆"
-                    mapping_source = "memory"
-                elif matched_by_builtin_sample:
-                    confidence = 0.93
-                    reason = "命中内置样品编号别名"
-                    mapping_source = "builtin"
-                elif exact:
-                    confidence = 0.9
-                    reason = "原始表头与目标表头/规范字段一致"
-                    mapping_source = "exact"
-                elif leaf_exact_header and target == leaf_exact_header["display_header"]:
-                    confidence = 0.89
-                    unit_note = f"；父级检测到单位 {profile['detected_unit']}" if profile["detected_unit"] else ""
-                    reason = f"多级表头叶子字段“{profile['field_token']}”精确匹配目标字段{unit_note}"
-                    mapping_source = "leaf_exact"
-                elif matched_target:
-                    confidence = 0.78
-                    reason = "基于目标表头名称相似度建议"
-                    mapping_source = "similarity"
-                else:
-                    mapping_source = "unresolved"
-                suggestions.append({
-                    "element_id": element["element_id"],
-                    "element_type": element["element_type"],
-                    "table_label": element.get("caption") or element.get("text_content") or element["element_id"],
-                    "page_number": element.get("page_number"),
-                    "source_header": source,
-                    "suggested_target_header": target if matched_target else "",
-                    "confidence": round(confidence, 3),
-                    "reason": reason,
-                    "mapping_source": mapping_source,
-                    "existing_rule_id": alias_rule_ids.get(norm, ""),
-                })
+        knowledge_db = self.pm.get_database(project_id)
+        try:
+            knowledge = MappingKnowledgeService(knowledge_db)
+            for element in elements:
+                raw = element.get("raw_table") or {}
+                source_headers = [str(value).strip() for value in raw.get("headers") or [] if str(value).strip()]
+                if not source_headers and raw.get("body_text"):
+                    source_headers = self._source_header_tokens(str(raw.get("body_text") or ""))[:40]
+                mapped = self._map_source_headers(source_headers, headers, alias_rules)
+                for source, target in mapped:
+                    key = (element["element_id"], self._norm(source))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    norm = self._norm(source)
+                    if norm == "specimen" and target == source:
+                        target = sample_header
+                    matched_by_user_rule = norm in alias_rules
+                    advisory_rule = advisory_rules.get(norm)
+                    matched_by_builtin_sample = target == sample_header and norm in {
+                        "sample", "sampleno", "samplenumber", "samplename", "sampleid", "specimen",
+                    }
+                    profile = self._source_header_profile(source)
+                    knowledge_candidates = knowledge.rank_targets(source, profile, headers, limit=3)
+                    knowledge_match = knowledge_candidates[0] if knowledge_candidates else None
+                    leaf_norm = self._norm(profile["field_token"])
+                    leaf_exact_header = next((
+                        header for header in headers
+                        if leaf_norm and leaf_norm in {
+                            self._norm(header["display_header"]),
+                            self._norm(header["canonical_field"]),
+                        }
+                    ), None)
+                    exact_header = next((
+                        header for header in headers
+                        if norm in {
+                            self._norm(header["display_header"]),
+                            self._norm(header["canonical_field"]),
+                        }
+                    ), None)
+
+                    if matched_by_user_rule:
+                        target = alias_rules[norm]
+                    elif exact_header:
+                        target = exact_header["display_header"]
+                    elif matched_by_builtin_sample:
+                        target = sample_header
+                    elif advisory_rule:
+                        target = advisory_rule["resolved_target_header"]
+                    elif knowledge_match:
+                        target = knowledge_match["target"]["display_header"]
+                    elif leaf_exact_header:
+                        target = leaf_exact_header["display_header"]
+                    matched_target = next((header for header in headers if header["display_header"] == target), None)
+                    exact = bool(exact_header and target == exact_header["display_header"])
+                    confidence = 0.35
+                    reason = "未发现明确目标表头，需要人工确认"
+                    knowledge_metadata = {
+                        "knowledge_concept_id": "",
+                        "knowledge_concept_version_id": "",
+                        "knowledge_release_id": "",
+                        "chemical_form": "",
+                        "unit_compatibility": "",
+                        "source_references": [],
+                        "auto_applied": False,
+                        "mapping_reason": reason,
+                    }
+                    if matched_by_user_rule:
+                        confidence = 0.96
+                        reason = "命中已确认规则记忆"
+                        mapping_source = "memory"
+                    elif exact:
+                        confidence = 0.9
+                        reason = "原始表头与目标表头/规范字段一致"
+                        mapping_source = "exact"
+                    elif matched_by_builtin_sample:
+                        confidence = 0.93
+                        reason = "命中内置样品编号别名"
+                        mapping_source = "builtin"
+                    elif advisory_rule:
+                        # Published organization rules remain visible even when the
+                        # knowledge layer cannot prove that they are safe to apply.
+                        # Keep the confidence below the UI's preselection threshold
+                        # so a curator must explicitly confirm the suggestion.
+                        confidence = min(float(advisory_rule.get("confidence") or 0.75), 0.77)
+                        reason = "命中已发布组织规则，但未满足安全自动应用条件，需要人工确认"
+                        mapping_source = "organization_advisory"
+                    elif knowledge_match:
+                        confidence = float(knowledge_match["score"])
+                        compatibility = str(knowledge_match["unit_compatibility"])
+                        reason = (
+                            f"知识库概念 {knowledge_match['concept_id']} 精确匹配；"
+                            f"化学形态 {knowledge_match['chemical_form']}；单位{compatibility}"
+                        )
+                        mapping_source = "knowledge"
+                        knowledge_metadata = {
+                            "knowledge_concept_id": knowledge_match["concept_id"],
+                            "knowledge_concept_version_id": knowledge_match["concept_version_id"],
+                            "knowledge_release_id": knowledge_match["release_id"],
+                            "chemical_form": knowledge_match["chemical_form"],
+                            "unit_compatibility": compatibility,
+                            "source_references": knowledge_match["source_references"],
+                            "auto_applied": bool(knowledge_match["auto_applied"]),
+                            "mapping_reason": reason,
+                        }
+                    elif leaf_exact_header and target == leaf_exact_header["display_header"]:
+                        confidence = 0.89
+                        unit_note = f"；父级检测到单位 {profile['detected_unit']}" if profile["detected_unit"] else ""
+                        reason = f"多级表头叶子字段“{profile['field_token']}”精确匹配目标字段{unit_note}"
+                        mapping_source = "leaf_exact"
+                    else:
+                        matched_target = None
+                        target = ""
+                        mapping_source = "unresolved"
+                    suggestions.append({
+                        "element_id": element["element_id"],
+                        "element_type": element["element_type"],
+                        "table_label": element.get("caption") or element.get("text_content") or element["element_id"],
+                        "page_number": element.get("page_number"),
+                        "source_header": source,
+                        "suggested_target_header": target if matched_target else "",
+                        "confidence": round(confidence, 3),
+                        "reason": reason,
+                        "mapping_source": mapping_source,
+                        "existing_rule_id": alias_rule_ids.get(norm, "") or str(
+                            (advisory_rule or {}).get("rule_id") or ""
+                        ),
+                        "requires_confirmation": bool(advisory_rule),
+                        **knowledge_metadata,
+                    })
+        finally:
+            knowledge_db.close()
         return {
             "article_id": article_id,
             "selected_table_count": len(elements),
@@ -1281,7 +1352,12 @@ class WorkbenchService:
             "config_version": self._mapping_config_version(config),
         }
 
-    def _mapping_target_candidates(self, source: dict[str, Any], targets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _mapping_target_candidates(
+        self,
+        source: dict[str, Any],
+        targets: list[dict[str, Any]],
+        knowledge: MappingKnowledgeService | None = None,
+    ) -> list[dict[str, Any]]:
         """Give the model a small, explainable target shortlist for one source header."""
         profile = source.get("field_token") or source.get("source_header") or ""
         source_text = f"{source.get('source_header', '')} {profile} {source.get('group_context', '')}".lower()
@@ -1306,21 +1382,47 @@ class WorkbenchService:
                 score += 0.08
             scores.append((score, target))
         scores.sort(key=lambda item: (-item[0], item[1]["order"]))
-        return [
+        heuristic = [
             {"display_header": item["display_header"], "canonical_field": item["canonical_field"], "unit": item["target_unit"], "description": item["description"]}
             for score, item in scores[:12] if score > 0
         ]
+        knowledge_first: list[dict[str, Any]] = []
+        if knowledge:
+            for match in knowledge.rank_targets(str(source.get("source_header") or ""), source, targets, limit=12):
+                item = match["target"]
+                knowledge_first.append({
+                    "display_header": item["display_header"],
+                    "canonical_field": item["canonical_field"],
+                    "unit": item["target_unit"],
+                    "description": item["description"],
+                    "knowledge_score": match["score"],
+                    "chemical_form": match["chemical_form"],
+                    "unit_compatibility": match["unit_compatibility"],
+                })
+        combined: list[dict[str, Any]] = []
+        seen_targets: set[str] = set()
+        for item in [*knowledge_first, *heuristic]:
+            if item["display_header"] in seen_targets:
+                continue
+            seen_targets.add(item["display_header"])
+            combined.append(item)
+        return combined[:12]
 
     def _run_mapping_batch(
         self, project_id: str, article_id: str, batch: list[dict[str, Any]], targets: list[dict[str, Any]], config: Any,
     ) -> dict[str, Any]:
         capability = self._mapping_model_capabilities(config)
         candidate_payload = []
-        for source in batch:
-            candidate_payload.append({
-                **source,
-                "candidate_targets": self._mapping_target_candidates(source, targets),
-            })
+        knowledge_db = self.pm.get_database(project_id)
+        try:
+            knowledge = MappingKnowledgeService(knowledge_db)
+            for source in batch:
+                candidate_payload.append({
+                    **source,
+                    "candidate_targets": self._mapping_target_candidates(source, targets, knowledge),
+                })
+        finally:
+            knowledge_db.close()
         prompt = {
             "instruction": "Map each source header to one exact target display_header from its candidate_targets, or null. Return JSON only. Do not return reasoning or data values.",
             "source_headers": candidate_payload,
@@ -1475,17 +1577,35 @@ class WorkbenchService:
         target_by_norm.update({self._norm(item["canonical_field"]): item for item in targets})
         mapped_by_source: dict[str, dict[str, Any]] = {}
         rejected: list[dict[str, str]] = []
-        for mapping in mappings:
-            source_key = self._norm(str(mapping.get("source_header") or ""))
-            target = target_by_name.get(str(mapping.get("target_header") or "").strip()) or target_by_norm.get(self._norm(str(mapping.get("target_header") or "")))
-            context = source_context.get(source_key)
-            if not context or not target:
-                rejected.append({"source_header": str(mapping.get("source_header") or ""), "reason": "目标字段不属于当前文章绑定表头"})
-                continue
-            if not self._llm_mapping_is_safe(context["source_header"], target, context):
-                rejected.append({"source_header": context["source_header"], "reason": "不安全的字段语义映射"})
-                continue
-            mapped_by_source[source_key] = {"target_header": target["display_header"], "confidence": max(0.0, min(float(mapping.get("confidence") or 0.75), 0.95)), "reason": str(mapping.get("reason") or "AI 建议")}
+        knowledge_db = self.pm.get_database(project_id)
+        try:
+            knowledge = MappingKnowledgeService(knowledge_db)
+            for mapping in mappings:
+                source_key = self._norm(str(mapping.get("source_header") or ""))
+                target = target_by_name.get(str(mapping.get("target_header") or "").strip()) or target_by_norm.get(
+                    self._norm(str(mapping.get("target_header") or ""))
+                )
+                context = source_context.get(source_key)
+                if not context or not target:
+                    rejected.append({
+                        "source_header": str(mapping.get("source_header") or ""),
+                        "reason": "目标字段不属于当前文章绑定表头",
+                    })
+                    continue
+                validation = knowledge.validate_mapping(context["source_header"], context, target)
+                if not self._llm_mapping_is_safe(context["source_header"], target, context, knowledge):
+                    rejected.append({
+                        "source_header": context["source_header"],
+                        "reason": validation["reason"] if validation["known"] else "不安全的字段语义映射",
+                    })
+                    continue
+                mapped_by_source[source_key] = {
+                    "target_header": target["display_header"],
+                    "confidence": max(0.0, min(float(mapping.get("confidence") or 0.75), 0.95)),
+                    "reason": str(mapping.get("reason") or "AI 建议"),
+                }
+        finally:
+            knowledge_db.close()
         assisted_count = 0
         for item in result["items"]:
             mapping = mapped_by_source.get(self._norm(str(item.get("source_header") or "")))
@@ -1514,9 +1634,19 @@ class WorkbenchService:
                 "source_type": "table_header",
                 "element_id": str(rule.get("element_id") or ""),
                 "evidence": str(rule.get("reason") or "表格规则预检确认"),
-                "conditions": rule.get("conditions") or {},
+                "conditions": {
+                    **(rule.get("conditions") or {}),
+                    "knowledge_concept_id": str(rule.get("knowledge_concept_id") or ""),
+                    "knowledge_concept_version_id": str(rule.get("knowledge_concept_version_id") or ""),
+                    "knowledge_release_id": str(rule.get("knowledge_release_id") or ""),
+                    "chemical_form": str(rule.get("chemical_form") or ""),
+                    "unit_compatibility": str(rule.get("unit_compatibility") or ""),
+                    "source_references": rule.get("source_references") or [],
+                    "auto_applied": bool(rule.get("auto_applied")),
+                    "mapping_reason": str(rule.get("mapping_reason") or rule.get("reason") or ""),
+                },
                 "confidence": float(rule.get("confidence") or 0.9),
-                "scope": scope,
+                "scope": "article" if rule.get("auto_applied") else scope,
                 "enabled": True,
             }))
         return {"created": len(created), "rules": created}
@@ -1595,7 +1725,6 @@ class WorkbenchService:
         db = self.pm.get_database(project_id)
         try:
             now = datetime.now().isoformat()
-            rule_id = self._next_id(db, "learned_extraction_rules", "rule_id", "LRN", 6)
             source_alias = str(payload.get("source_alias") or payload.get("pattern") or "").strip()
             target_header = str(payload.get("target_header") or "").strip()
             target_norm = self._norm(target_header)
@@ -1610,13 +1739,38 @@ class WorkbenchService:
                 target_header = target["display_header"]
             target_field = str(payload.get("target_field") or (target or {}).get("canonical_field") or target_header or "resource")
             scope = str(payload.get("scope") or "article")
+            if scope == "organization":
+                raise ValueError("组织级规则必须在规则中心提交并由 Owner 审批发布。")
             rule_article_id = None if scope == "project" else article_id
+            conditions = payload.get("conditions") or {}
+            if bool(conditions.get("auto_applied")):
+                existing = db.fetch_one(
+                    """SELECT * FROM learned_extraction_rules
+                       WHERE project_id = ?
+                         AND COALESCE(article_id, '') = COALESCE(?, '')
+                         AND rule_type = ?
+                         AND LOWER(TRIM(pattern)) = LOWER(TRIM(?))
+                         AND LOWER(TRIM(target_header)) = LOWER(TRIM(?))
+                         AND enabled = 1
+                       ORDER BY created_at DESC LIMIT 1""",
+                    (
+                        project_id,
+                        rule_article_id,
+                        str(payload.get("rule_type") or "source_alias"),
+                        source_alias,
+                        target_header,
+                    ),
+                )
+                if existing:
+                    return dict(existing)
+            rule_id = self._next_id(db, "learned_extraction_rules", "rule_id", "LRN", 6)
+            created_by = str(payload.get("created_by") or ("mapping_knowledge" if conditions.get("auto_applied") else "user"))
             db.execute(
                 """INSERT INTO learned_extraction_rules
                    (rule_id, project_id, article_id, target_field, target_header, target_unit,
                     rule_type, source_type, pattern, evidence, conditions, confidence,
                     risk_level, review_status, scope, enabled, element_id, created_at, created_by)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'low', 'confirmed', ?, ?, ?, ?, 'user')""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'low', 'confirmed', ?, ?, ?, ?, ?)""",
                 (
                     rule_id, project_id, rule_article_id, target_field, target_header,
                     str(payload.get("target_unit") or (target or {}).get("target_unit") or ""),
@@ -1624,12 +1778,13 @@ class WorkbenchService:
                     str(payload.get("source_type") or "table_header"),
                     source_alias,
                     str(payload.get("evidence") or ""),
-                    json.dumps(payload.get("conditions") or {}, ensure_ascii=False),
+                    json.dumps(conditions, ensure_ascii=False),
                     float(payload.get("confidence") or 0.9),
                     scope,
                     1 if payload.get("enabled", True) else 0,
                     str(payload.get("element_id") or ""),
                     now,
+                    created_by,
                 ),
             )
             db.commit()
@@ -1644,22 +1799,35 @@ class WorkbenchService:
             mapping = [dict(row) for row in db.fetch_all(
                 "SELECT * FROM mapping_rules ORDER BY created_at DESC"
             )]
-            params: tuple[Any, ...]
-            clause = "project_id = ?"
-            params = (project_id,)
+            project = db.fetch_one(
+                "SELECT organization_id FROM projects WHERE project_id = ?",
+                (project_id,),
+            )
+            organization_id = str((dict(project) if project else {}).get("organization_id") or "ORG_DEFAULT")
+            params: list[Any] = [project_id, organization_id]
+            clause = "(project_id = ? OR (scope = 'organization' AND organization_id = ?))"
             if article_id:
                 clause += " AND (article_id = ? OR article_id IS NULL OR article_id = '')"
-                params = (project_id, article_id)
+                params.append(article_id)
             rows = db.fetch_all(
                 f"""SELECT * FROM learned_extraction_rules
                     WHERE {clause} AND review_status = 'confirmed'
-                    ORDER BY created_at DESC""",
-                params,
+                    ORDER BY CASE scope WHEN 'article' THEN 0 WHEN 'project' THEN 1 ELSE 2 END,
+                             COALESCE(published_at, created_at) DESC""",
+                tuple(params),
             )
             extraction = []
             for row in rows:
                 item = dict(row)
                 item["enabled"] = bool(item.get("enabled", 1))
+                item["revision"] = int(item.get("revision") or 1)
+                conditions = item.get("conditions")
+                if not isinstance(conditions, dict):
+                    try:
+                        conditions = json.loads(str(conditions or "{}"))
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        conditions = {}
+                item["conditions"] = conditions
                 extraction.append(item)
             return {"mapping": mapping, "extraction": extraction}
         finally:
@@ -1668,6 +1836,20 @@ class WorkbenchService:
     def update_rule_memory(self, project_id: str, rule_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         db = self.pm.get_database(project_id)
         try:
+            current = db.fetch_one(
+                "SELECT * FROM learned_extraction_rules WHERE project_id = ? AND rule_id = ?",
+                (project_id, rule_id),
+            )
+            if not current:
+                raise ValueError("Rule not found")
+            current_item = dict(current)
+            if (
+                current_item.get("scope") == "organization"
+                and (current_item.get("published_at") or current_item.get("source_submission_id"))
+            ):
+                raise ValueError("已发布组织规则不可直接修改，请在规则中心提交新版本。")
+            if payload.get("scope") == "organization":
+                raise ValueError("组织级规则必须在规则中心提交并由 Owner 审批发布。")
             allowed = {"enabled", "scope", "target_header", "target_field", "target_unit", "pattern", "rule_type", "source_type", "evidence", "conditions"}
             sets = []
             values: list[Any] = []
@@ -2447,7 +2629,29 @@ class WorkbenchService:
         db = self.pm.get_database(project_id)
         try:
             table = "mapping_rules" if rule_type == "mapping" else "learned_extraction_rules"
-            db.execute(f"DELETE FROM {table} WHERE rule_id = ?", (rule_id,))
+            if rule_type == "mapping":
+                current = db.fetch_one("SELECT * FROM mapping_rules WHERE rule_id = ?", (rule_id,))
+            else:
+                current = db.fetch_one(
+                    "SELECT * FROM learned_extraction_rules WHERE project_id = ? AND rule_id = ?",
+                    (project_id, rule_id),
+                )
+            if not current:
+                raise ValueError("Rule not found")
+            current_item = dict(current)
+            if (
+                rule_type != "mapping"
+                and current_item.get("scope") == "organization"
+                and (current_item.get("published_at") or current_item.get("source_submission_id"))
+            ):
+                raise ValueError("已发布组织规则不可删除，请在规则中心提交替代版本。")
+            if rule_type == "mapping":
+                db.execute("DELETE FROM mapping_rules WHERE rule_id = ?", (rule_id,))
+            else:
+                db.execute(
+                    "DELETE FROM learned_extraction_rules WHERE project_id = ? AND rule_id = ?",
+                    (project_id, rule_id),
+                )
             db.commit()
             if rule_type == "mapping":
                 self._write_rules_md(project_id)
@@ -3346,6 +3550,18 @@ class WorkbenchService:
         progress: ProgressCallback | None = None,
         element_ids: list[str] | None = None,
     ) -> dict[str, Any]:
+        preflight = self.table_rule_preflight(project_id, article_id)
+        auto_rules: list[dict[str, Any]] = []
+        seen_auto: set[tuple[str, str]] = set()
+        for item in preflight.get("items", []):
+            target = str(item.get("suggested_target_header") or "")
+            key = (self._norm(str(item.get("source_header") or "")), self._norm(target))
+            if not item.get("auto_applied") or item.get("existing_rule_id") or not all(key) or key in seen_auto:
+                continue
+            seen_auto.add(key)
+            auto_rules.append(item)
+        if auto_rules:
+            self.confirm_table_rule_preflight(project_id, article_id, auto_rules, scope="article")
         return self.create_extraction_batch(
             project_id,
             article_id,
@@ -4470,17 +4686,11 @@ class WorkbenchService:
             if target:
                 return target
 
-        target = next((
-            h for h in targets
-            if len(self._norm(h["canonical_field"])) >= 2 and self._norm(h["canonical_field"]) in norm
-        ), None)
-        if target:
-            return target
-        return next((
-            h for h in targets
-            if len(self._norm(str(h["display_header"]).split()[0])) >= 2
-            and self._norm(str(h["display_header"]).split()[0]) in norm
-        ), None)
+        # Broad substring matching is intentionally forbidden here.  Short
+        # geochemical symbols are not interchangeable with longer chemical
+        # forms (K/K2O, FeO/Fe2O3). Unresolved fields are handled by the
+        # knowledge ranker, bounded LLM suggestions, or explicit user rules.
+        return None
 
     def _map_source_headers(self, source_headers: list[str], targets: list[dict[str, Any]], alias_rules: dict[str, str] | None = None) -> list[tuple[str, str]]:
         rules = {**self._active_alias_rules(targets), **(alias_rules or {})}
@@ -4505,24 +4715,70 @@ class WorkbenchService:
 
     def _pre_extraction_alias_rules(self, project_id: str, article_id: str, targets: list[dict[str, Any]]) -> dict[str, str]:
         available = {h["display_header"] for h in targets}
-        db = self.pm.get_database(project_id)
-        try:
-            rows = db.fetch_all(
-                """SELECT pattern, target_header, target_field FROM learned_extraction_rules
-                   WHERE project_id = ? AND (article_id = ? OR article_id IS NULL OR article_id = '')
-                     AND review_status = 'confirmed' AND COALESCE(enabled, 1) = 1
-                     AND rule_type IN ('source_alias', 'column_alias', 'sample_identifier')""",
-                (project_id, article_id),
-            )
-            rules = {}
-            for row in rows:
-                target = row["target_header"] or row["target_field"] or ""
-                target = target if target in available else target_by_norm.get(self._norm(target), "")
-                if target and row["pattern"]:
-                    rules[self._norm(row["pattern"])] = target
-            return rules
-        finally:
-            db.close()
+        target_by_norm = {
+            self._norm(h["display_header"]): h["display_header"] for h in targets
+        } | {
+            self._norm(h["canonical_field"]): h["display_header"] for h in targets
+        }
+        rows = self.rule_memory(project_id, article_id)["extraction"]
+        eligible = []
+        for row in rows:
+            if not row.get("enabled", True):
+                continue
+            if row.get("rule_type") not in {"source_alias", "column_alias", "sample_identifier"}:
+                continue
+            if row.get("scope") == "organization" and not row.get("conditions", {}).get("auto_apply_allowed", False):
+                continue
+            eligible.append(row)
+
+        def priority(item: dict[str, Any]) -> int:
+            if str(item.get("article_id") or "") == article_id:
+                return 3
+            return {"organization": 0, "project": 1, "article": 2}.get(str(item.get("scope") or ""), 1)
+
+        rules: dict[str, str] = {}
+        for row in sorted(eligible, key=priority):
+            target = row.get("target_header") or row.get("target_field") or ""
+            target = target if target in available else target_by_norm.get(self._norm(target), "")
+            if target and row.get("pattern"):
+                rules[self._norm(row["pattern"])] = target
+        return rules
+
+    def _pre_extraction_advisory_rules(
+        self,
+        project_id: str,
+        article_id: str,
+        targets: list[dict[str, Any]],
+    ) -> dict[str, dict[str, Any]]:
+        """Return published organization aliases that still require confirmation.
+
+        These rules are governed and reusable, but are deliberately excluded from
+        extraction memory until their mapping is confirmed for the current article.
+        """
+        available = {str(header["display_header"]) for header in targets}
+        target_by_norm = {
+            self._norm(str(header["display_header"])): str(header["display_header"])
+            for header in targets
+        } | {
+            self._norm(str(header["canonical_field"])): str(header["display_header"])
+            for header in targets
+        }
+        advisory: dict[str, dict[str, Any]] = {}
+        for row in self.rule_memory(project_id, article_id)["extraction"]:
+            if not row.get("enabled", True) or row.get("scope") != "organization":
+                continue
+            if row.get("rule_type") not in {"source_alias", "column_alias", "sample_identifier"}:
+                continue
+            if row.get("conditions", {}).get("auto_apply_allowed", False):
+                continue
+            pattern = str(row.get("pattern") or "").strip()
+            target = str(row.get("target_header") or row.get("target_field") or "").strip()
+            resolved_target = target if target in available else target_by_norm.get(self._norm(target), "")
+            key = self._norm(pattern)
+            if not key or not resolved_target or key in advisory:
+                continue
+            advisory[key] = {**row, "resolved_target_header": resolved_target}
+        return advisory
 
     def _pre_extraction_alias_rule_ids(self, project_id: str, article_id: str, targets: list[dict[str, Any]]) -> dict[str, str]:
         available = {h["display_header"] for h in targets}
@@ -4531,28 +4787,40 @@ class WorkbenchService:
         } | {
             self._norm(h["canonical_field"]): h["display_header"] for h in targets
         }
-        db = self.pm.get_database(project_id)
-        try:
-            rows = db.fetch_all(
-                """SELECT rule_id, pattern, target_header, target_field FROM learned_extraction_rules
-                   WHERE project_id = ? AND (article_id = ? OR article_id IS NULL OR article_id = '')
-                     AND review_status = 'confirmed' AND COALESCE(enabled, 1) = 1
-                     AND rule_type IN ('source_alias', 'column_alias', 'sample_identifier')""",
-                (project_id, article_id),
-            )
-            rule_ids = {}
-            for row in rows:
-                target = row["target_header"] or row["target_field"] or ""
-                target = target if target in available else target_by_norm.get(self._norm(target), "")
-                if target and row["pattern"]:
-                    rule_ids[self._norm(row["pattern"])] = row["rule_id"]
-            return rule_ids
-        finally:
-            db.close()
+        rows = self.rule_memory(project_id, article_id)["extraction"]
+        eligible = []
+        for row in rows:
+            if not row.get("enabled", True):
+                continue
+            if row.get("rule_type") not in {"source_alias", "column_alias", "sample_identifier"}:
+                continue
+            if row.get("scope") == "organization" and not row.get("conditions", {}).get("auto_apply_allowed", False):
+                continue
+            eligible.append(row)
+
+        def priority(item: dict[str, Any]) -> int:
+            if str(item.get("article_id") or "") == article_id:
+                return 3
+            return {"organization": 0, "project": 1, "article": 2}.get(str(item.get("scope") or ""), 1)
+
+        rule_ids: dict[str, str] = {}
+        for row in sorted(eligible, key=priority):
+            target = row.get("target_header") or row.get("target_field") or ""
+            target = target if target in available else target_by_norm.get(self._norm(target), "")
+            if target and row.get("pattern"):
+                rule_ids[self._norm(row["pattern"])] = str(row.get("rule_id") or "")
+        return rule_ids
 
     def _extraction_memory(self, project_id: str, article_id: str) -> dict[str, Any]:
         rows = self.rule_memory(project_id, article_id)["extraction"]
-        enabled = [row for row in rows if row.get("enabled", True)]
+        enabled = [
+            row for row in rows
+            if row.get("enabled", True)
+            and (
+                row.get("scope") != "organization"
+                or row.get("conditions", {}).get("auto_apply_allowed", False)
+            )
+        ]
         compact_rules = []
         for row in enabled:
             compact_rules.append({

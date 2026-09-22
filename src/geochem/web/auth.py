@@ -17,6 +17,8 @@ from starlette.requests import Request
 from ..core.project import DEFAULT_WORKSPACE_ID, ProjectManager
 from ..core.runtime import RuntimeSettings
 from ..services.execution_context import user_execution_context
+from ..services.workspace_access import WorkspaceAccessService
+from .rate_limit import ApiRateLimiter, RateLimitDecision
 
 
 GEOCHEM_ROLES = frozenset({"admin", "curator", "reviewer", "viewer"})
@@ -30,6 +32,16 @@ PUBLIC_PATHS = frozenset({
 })
 ADMIN_PREFIXES = (
     "/api/v1/admin",
+    "/api/v1/settings",
+    "/api/v1/model-setup",
+    "/api/v1/provider-presets",
+    "/api/v1/providers",
+    "/api/v1/costs",
+    "/api/v1/export-directory",
+)
+WORKSPACE_EXEMPT_PREFIXES = (
+    "/api/v1/auth/",
+    "/api/v1/admin/",
     "/api/v1/settings",
     "/api/v1/model-setup",
     "/api/v1/provider-presets",
@@ -86,6 +98,11 @@ def required_roles(method: str, path: str) -> frozenset[str]:
         return frozenset()
     if path == "/api/v1/export-directory" and method.upper() == "GET":
         return GEOCHEM_ROLES
+    # Rule governance is organization-scoped. Workspace membership decides
+    # whether a member may submit or approve, while Keycloak only establishes
+    # their platform identity.
+    if path.startswith("/api/v1/admin/rule-submissions"):
+        return GEOCHEM_ROLES
     if path.startswith(ADMIN_PREFIXES):
         return frozenset({"admin"})
 
@@ -112,6 +129,39 @@ def required_roles(method: str, path: str) -> frozenset[str]:
     if upper_method in {"GET", "HEAD"}:
         return GEOCHEM_ROLES
     return frozenset({"admin", "curator"})
+
+
+def required_workspace_action(method: str, path: str) -> str:
+    """Map an already role-authorized request to a workspace permission."""
+
+    upper_method = method.upper()
+    if path.startswith("/api/v1/admin/rule-submissions"):
+        return "manage"
+    if path.startswith(("/api/v1/rule-submissions", "/api/v1/rule-imports")):
+        # The governance service performs the finer submitter-role check so
+        # reviewers can propose rules while viewers remain read-only.
+        return "read"
+    if upper_method in {"GET", "HEAD"}:
+        return "read"
+    if (
+        ("/candidate-records/" in path and path.endswith(("/approve", "/reject")))
+        or "/reviews" in path
+        or "/batch-approve" in path
+        or path.endswith("/finalize")
+        or path.endswith("/export")
+    ):
+        return "review"
+    return "curate"
+
+
+def _workspace_uses_membership_policy(path: str) -> bool:
+    if path.startswith("/api/v1/admin/rule-submissions"):
+        return True
+    return (
+        path.startswith("/api/v1/")
+        and path not in PUBLIC_PATHS
+        and not path.startswith(WORKSPACE_EXEMPT_PREFIXES)
+    )
 
 
 class OIDCAuthenticator:
@@ -229,6 +279,8 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         settings: RuntimeSettings,
         authenticator: OIDCAuthenticator | None = None,
         audit_logger: Callable[[Request, str, int, AuthenticatedUser | None], None] | None = None,
+        workspace_access: WorkspaceAccessService | None = None,
+        rate_limiter: ApiRateLimiter | None = None,
     ):
         super().__init__(app)
         self.settings = settings
@@ -236,11 +288,22 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
             OIDCAuthenticator(settings) if settings.auth_mode == "oidc" else None
         )
         self.audit_logger = audit_logger
+        self.workspace_access = workspace_access
+        self.rate_limiter = rate_limiter
 
     async def dispatch(self, request: Request, call_next):
         request_id = request.headers.get("x-request-id") or uuid4().hex
         needed = required_roles(request.method, request.url.path)
+        # Keycloak authenticates the person and identifies platform admins.
+        # Workspace membership is the source of truth for business actions, so
+        # the same person can be a curator in one workspace and a viewer in another.
+        if self.workspace_access is not None and _workspace_uses_membership_policy(
+            request.url.path
+        ):
+            needed = GEOCHEM_ROLES
         user: AuthenticatedUser | None = None
+        rate_decision: RateLimitDecision | None = None
+        json_payload: dict[str, Any] = {}
         if self.settings.auth_mode == "disabled":
             user = AuthenticatedUser(
                 subject="local-development",
@@ -271,14 +334,90 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
                     user,
                 )
 
+        if (
+            user is not None
+            and self.rate_limiter is not None
+            and request.url.path.startswith("/api/v1/")
+            and request.url.path not in PUBLIC_PATHS
+            and request.method.upper() != "OPTIONS"
+        ):
+            try:
+                rate_decision = self.rate_limiter.check(
+                    user.subject,
+                    request.method,
+                    request.url.path,
+                )
+            except RuntimeError as exc:
+                return self._error(request, request_id, 503, str(exc), user)
+            if not rate_decision.allowed:
+                return self._error(
+                    request,
+                    request_id,
+                    429,
+                    "请求过于频繁，请稍后重试。",
+                    user,
+                    extra_headers={
+                        "Retry-After": str(rate_decision.retry_after),
+                        "X-RateLimit-Limit": str(rate_decision.limit),
+                        "X-RateLimit-Remaining": "0",
+                        "X-RateLimit-Bucket": rate_decision.bucket,
+                    },
+                )
+
+        if (
+            user is not None
+            and self.workspace_access is not None
+            and _workspace_uses_membership_policy(request.url.path)
+        ):
+            project_id = request.query_params.get("project_id") or ""
+            content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+            if content_type == "application/json":
+                try:
+                    payload = json.loads((await request.body()).decode("utf-8") or "{}")
+                    if isinstance(payload, dict):
+                        json_payload = payload
+                        if not project_id:
+                            project_id = str(payload.get("project_id") or "")
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    pass
+            project_id = project_id or DEFAULT_WORKSPACE_ID
+            try:
+                request.state.workspace_role = self.workspace_access.require(
+                    project_id,
+                    user.subject,
+                    user.roles,
+                    required_workspace_action(request.method, request.url.path),
+                )
+                self.workspace_access.require_request_objects(
+                    project_id,
+                    request.url.path,
+                    {
+                        **{
+                            key: value
+                            for key, value in request.query_params.items()
+                            if key != "project_id"
+                        },
+                        **json_payload,
+                    },
+                )
+            except PermissionError as exc:
+                return self._error(request, request_id, 403, str(exc), user)
+
         request.state.user = user
         request.state.request_id = request_id
-        with user_execution_context(user.subject if user else ""):
+        with user_execution_context(
+            user.subject if user else "",
+            user.roles if user else (),
+        ):
             response = await call_next(request)
         response.headers["X-Request-ID"] = request_id
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "same-origin"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        if rate_decision is not None:
+            response.headers["X-RateLimit-Limit"] = str(rate_decision.limit)
+            response.headers["X-RateLimit-Remaining"] = str(rate_decision.remaining)
+            response.headers["X-RateLimit-Bucket"] = rate_decision.bucket
         if self.audit_logger:
             self.audit_logger(request, request_id, response.status_code, user)
         return response
@@ -290,10 +429,12 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         status_code: int,
         detail: str,
         user: AuthenticatedUser | None,
+        extra_headers: dict[str, str] | None = None,
     ) -> JSONResponse:
         if self.audit_logger:
             self.audit_logger(request, request_id, status_code, user)
         headers = {"X-Request-ID": request_id}
+        headers.update(extra_headers or {})
         if status_code == 401:
             headers["WWW-Authenticate"] = "Bearer"
         return JSONResponse(status_code=status_code, content={"detail": detail}, headers=headers)

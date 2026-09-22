@@ -1,10 +1,21 @@
 import { describe, expect, it } from 'vitest'
-import { buildGridRows, WORKBENCH_STEPS } from './candidateGrid'
+import { buildGridRows, resolveWorkbenchStep, WORKBENCH_STEPS } from './candidateGrid'
 import type { BatchPayload } from './types'
 
 describe('candidate grid', () => {
   it('keeps the required workbench order', () => {
-    expect(WORKBENCH_STEPS).toEqual(['自动资源发现', '原文核校与资源补充', '资源抽取与候选处理', '映射确认与质检'])
+    expect(WORKBENCH_STEPS).toEqual(['资源发现与原文校核', '资源抽取与候选处理', '映射确认与质检'])
+  })
+
+  it('resolves named and legacy workbench deep links', () => {
+    expect(resolveWorkbenchStep('resources', null)).toBe(0)
+    expect(resolveWorkbenchStep('extract', null)).toBe(1)
+    expect(resolveWorkbenchStep('rules', null)).toBe(1)
+    expect(resolveWorkbenchStep('quality', null)).toBe(2)
+    expect(resolveWorkbenchStep(null, '0')).toBe(0)
+    expect(resolveWorkbenchStep(null, '1')).toBe(0)
+    expect(resolveWorkbenchStep(null, '2')).toBe(1)
+    expect(resolveWorkbenchStep(null, '3')).toBe(2)
   })
 
   it('keeps exact target headers and fills missing cells with empty strings', () => {

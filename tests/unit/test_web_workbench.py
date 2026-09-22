@@ -12,6 +12,7 @@ from geochem.core.project import ProjectManager
 from geochem.core.models import LLMResponse
 from geochem.providers.llm_client import LLMClient
 from geochem.curation.resource_scoring import ResourceScoringEngine
+from geochem.services.rule_governance import RuleGovernanceService
 from geochem.web.api import create_app
 from geochem.workbench_service import WorkbenchService
 
@@ -649,6 +650,63 @@ def test_table_rule_preflight_suggests_sampleid_before_extraction(tmp_path):
     assert specimen["confidence"] >= 0.9
 
 
+def test_published_organization_rule_that_is_not_safe_for_auto_apply_is_an_unchecked_suggestion(tmp_path):
+    pm, _headers = _workspace(tmp_path)
+    governance = RuleGovernanceService(pm)
+    workbench = WorkbenchService(pm)
+    draft = governance.create_submission(
+        "WEB_TEST",
+        "curator-user",
+        "curator",
+        (),
+        {
+            "source_term": "Bottle label",
+            "target_canonical_field": "SampleID",
+            "target_header": "SampleID",
+            "chemical_form": "identifier",
+            "context": "organization-specific sample label",
+            "scope": "organization",
+            "confidence": 0.97,
+        },
+    )
+    governance.submit("WEB_TEST", draft["submission_id"], "curator-user")
+    approved = governance.approve(
+        "WEB_TEST",
+        draft["submission_id"],
+        "owner-user",
+        "owner",
+        (),
+        "Approved as a reviewed organization convention",
+    )
+    assert approved["rule"]["conditions"]["auto_apply_allowed"] is False
+
+    db = pm.get_database("WEB_TEST")
+    try:
+        now = datetime.now().isoformat()
+        db.execute(
+            """INSERT INTO document_elements
+               (element_id, project_id, article_id, resource_id, element_type, page_number,
+                caption, raw_table_json, relevance_score, created_at, updated_at)
+               VALUES ('EL_ORG_ADVISORY', 'WEB_TEST', 'ART_WEB', 'RES_WEB', 'table', 1,
+                       'Organization sample table', ?, 0.9, ?, ?)""",
+            (json.dumps({"headers": ["Bottle label"], "rows": [["HDP-B1"]]}), now, now),
+        )
+        db.commit()
+    finally:
+        db.close()
+    workbench.set_selections("WEB_TEST", "ART_WEB", ["EL_ORG_ADVISORY"])
+
+    result = workbench.table_rule_preflight("WEB_TEST", "ART_WEB")
+    item = next(entry for entry in result["items"] if entry["source_header"] == "Bottle label")
+
+    assert item["suggested_target_header"] == "SampleID"
+    assert item["mapping_source"] == "organization_advisory"
+    assert item["requires_confirmation"] is True
+    assert item["confidence"] < 0.78
+    assert workbench._pre_extraction_alias_rules("WEB_TEST", "ART_WEB", workbench.target_headers("WEB_TEST", "ART_WEB")) == {}
+    assert workbench._extraction_memory("WEB_TEST", "ART_WEB")["rules"] == []
+
+
 def test_table_rule_preflight_keeps_exact_target_when_display_matches_source(tmp_path):
     pm, headers = _workspace(tmp_path)
     service = WorkbenchService(pm)
@@ -737,7 +795,7 @@ def test_confirm_table_rule_preflight_writes_rule_memory(tmp_path):
     assert any(rule["pattern"] == "sample no." and rule["target_header"] == "SampleID" for rule in memory)
     rule = next(rule for rule in memory if rule["pattern"] == "sample no.")
     assert rule["target_unit"] == "id"
-    assert "keep text" in rule["conditions"]
+    assert rule["conditions"]["conversion_formula"] == "keep text"
 
 
 def test_llm_assisted_preflight_only_maps_to_bound_target_headers(tmp_path, monkeypatch):
@@ -752,7 +810,7 @@ def test_llm_assisted_preflight_only_maps_to_bound_target_headers(tmp_path, monk
                 caption, raw_table_json, relevance_score, created_at, updated_at)
                VALUES ('EL_LLM_PREFLIGHT', 'WEB_TEST', 'ART_WEB', 'RES_WEB', 'table', 2,
                        'Table 2 organic geochemistry', ?, 0.9, ?, ?)""",
-            (json.dumps({"headers": ["Sample", "Total organic carbon"], "rows": [["WC-1", "3.2"]]}), now, now),
+            (json.dumps({"headers": ["Sample", "Organic richness proxy"], "rows": [["WC-1", "3.2"]]}), now, now),
         )
         db.commit()
     finally:
@@ -770,13 +828,13 @@ def test_llm_assisted_preflight_only_maps_to_bound_target_headers(tmp_path, monk
             return LLMResponse(
                 content=json.dumps({
                     "mappings": [
-                        {"source_header": "Total organic carbon", "target_header": "TOC %", "confidence": 0.91, "reason": "TOC alias"},
+                        {"source_header": "Organic richness proxy", "target_header": "TOC %", "confidence": 0.91, "reason": "TOC alias"},
                         {"source_header": "Unknown", "target_header": "NotInSchema", "confidence": 0.99, "reason": "invalid"},
                     ]
                 }),
                 final_content=json.dumps({
                     "mappings": [
-                        {"source_header": "Total organic carbon", "target_header": "TOC %", "confidence": 0.91, "reason": "TOC alias"},
+                        {"source_header": "Organic richness proxy", "target_header": "TOC %", "confidence": 0.91, "reason": "TOC alias"},
                         {"source_header": "Unknown", "target_header": "NotInSchema", "confidence": 0.99, "reason": "invalid"},
                     ]
                 }),
@@ -786,7 +844,7 @@ def test_llm_assisted_preflight_only_maps_to_bound_target_headers(tmp_path, monk
 
     monkeypatch.setattr("geochem.workbench_service.LLMClient", FakeLLMClient)
     result = service.assist_table_rule_preflight("WEB_TEST", "ART_WEB")
-    toc = next(item for item in result["items"] if item["source_header"] == "Total organic carbon")
+    toc = next(item for item in result["items"] if item["source_header"] == "Organic richness proxy")
 
     assert toc["suggested_target_header"] == "TOC %"
     assert toc["mapping_source"] == "llm"
@@ -808,7 +866,7 @@ def test_llm_assisted_preflight_keeps_local_suggestions_when_model_returns_non_j
                (element_id, project_id, article_id, resource_id, element_type, page_number,
                 raw_table_json, relevance_score, created_at, updated_at)
                VALUES ('EL_LLM_EMPTY', 'WEB_TEST', 'ART_WEB', 'RES_WEB', 'table', 2, ?, 0.9, ?, ?)""",
-            (json.dumps({"headers": ["Total organic carbon"], "rows": [["3.2"]]}), now, now),
+            (json.dumps({"headers": ["Organic richness proxy"], "rows": [["3.2"]]}), now, now),
         )
         db.commit()
     finally:
@@ -840,7 +898,7 @@ def test_reasoning_only_mapping_response_never_generates_suggestions(tmp_path, m
                (element_id, project_id, article_id, resource_id, element_type, page_number,
                 raw_table_json, relevance_score, created_at, updated_at)
                VALUES ('EL_REASONING_ONLY', 'WEB_TEST', 'ART_WEB', 'RES_WEB', 'table', 2, ?, 0.9, ?, ?)""",
-            (json.dumps({"headers": ["Total organic carbon"], "rows": [["3.2"]]}), now, now),
+            (json.dumps({"headers": ["Organic richness proxy"], "rows": [["3.2"]]}), now, now),
         )
         db.commit()
     finally:
@@ -871,6 +929,26 @@ def test_model_capabilities_endpoint_reports_active_mapping_route(tmp_path):
 
     assert response.status_code == 200
     assert "field_mapping" in response.json()
+
+
+def test_mapping_knowledge_api_returns_published_release_and_search_results(tmp_path):
+    pm, _headers = _workspace(tmp_path)
+    client = TestClient(create_app(pm))
+
+    release_response = client.get(
+        "/api/v1/mapping-knowledge/releases/current",
+        params={"project_id": "WEB_TEST"},
+    )
+    search_response = client.get(
+        "/api/v1/mapping-knowledge/search",
+        params={"project_id": "WEB_TEST", "q": "SiO2", "limit": 5},
+    )
+
+    assert release_response.status_code == 200
+    assert release_response.json()["status"] == "published"
+    assert search_response.status_code == 200
+    assert search_response.json()["release"]["release_id"] == release_response.json()["release_id"]
+    assert any(item["concept_id"] == "oxide_sio2" for item in search_response.json()["items"])
 
 
 def test_llm_call_ids_are_unique_without_database_sequence():

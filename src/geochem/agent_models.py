@@ -34,6 +34,26 @@ class ToolCallRecord(BaseModel):
     status: str = "pending"
     error_message: str = ""
     idempotency_key: str = ""
+    trust_source: str = "trusted_user"
+    policy_decision: str = "allowed"
+    confirmation_status: str = "not_required"
+    rejection_reason: str = ""
+    duration_ms: int = 0
+
+
+class AgentActivityEvent(BaseModel):
+    """Safe, user-visible execution event; never contains hidden reasoning."""
+
+    tool_call_id: str = ""
+    event_type: Literal["plan", "tool", "checkpoint", "status", "error"]
+    tool_name: str = ""
+    label: str
+    status: Literal["pending", "running", "completed", "failed", "waiting"] = "running"
+    safe_input_summary: dict[str, Any] = Field(default_factory=dict)
+    safe_output_summary: dict[str, Any] = Field(default_factory=dict)
+    duration_ms: int = 0
+    checkpoint: str = ""
+    error: str = ""
 
 
 class HandoffContext(BaseModel):
@@ -43,8 +63,10 @@ class HandoffContext(BaseModel):
     article_id: str
     checkpoint_kind: str = ""
     workflow_step: str = ""
+    workbench_view: Literal["resources", "extract", "quality"] = "resources"
     workbench_step: int = 1
     workbench_stage: str = ""
+    presentation: Literal["inline", "full"] = "full"
     return_path: str
     data_version: str = ""
     created_at: str

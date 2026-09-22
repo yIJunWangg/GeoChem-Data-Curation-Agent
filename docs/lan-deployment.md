@@ -1,6 +1,6 @@
 # GeoChem 局域网生产部署手册
 
-本手册对应第一版共享工作区部署：20–50 个账号通过浏览器访问一套 GeoChem，
+本手册对应第一版组织工作区部署：20–50 个账号通过浏览器访问一套 GeoChem，
 PostgreSQL 保存业务数据，Redis/Celery 执行耗时任务，Keycloak 管理身份和角色，
 Caddy 提供局域网 HTTPS，文章文件保存在服务器本地 SSD，并使用 restic 加密备份到 NAS。
 
@@ -25,8 +25,10 @@ LAN browser
 ```
 
 只有 Caddy 发布 `80/443`。PostgreSQL、Redis、Keycloak 和 FastAPI 均只存在于
-Docker 内部网络。第一版共用 `DEFAULT_WORKSPACE`，角色权限仍区分管理员、整理员、
-审核员和只读用户。
+Docker 内部网络。迁移后的既有数据继续位于 `DEFAULT_WORKSPACE`，并归入默认组织；
+Keycloak 负责登录身份和平台管理员，GeoChem 数据库使用工作区成员关系区分 Owner、
+Curator、Reviewer 和 Viewer。所有文章、PDF、对话、Agent、RAG 和导出访问都必须通过
+工作区成员校验，不能只凭对象 ID 读取。
 
 FastAPI 只接受 Caddy 从私有 Compose 网络转发的客户端地址信息。生产环境关闭
 `/docs`、`/redoc` 和 `/openapi.json`；Mac 开发预览仍保留这些接口，便于本机调试。
@@ -138,12 +140,14 @@ Keycloak 的回调地址和 Web Origin。运行 `scripts/export-caddy-ca.sh`，�
    登录按提示修改一次性密码。
 2. 在登录后的入口选择「进入管理后台」，打开「用户与权限」。
 3. 创建用户并设置临时密码。
-4. 分配一个或多个 GeoChem 角色：
-   - `admin`：设置、模型、账号和全部数据权限。
+4. Keycloak 中普通账号至少保留 `viewer` 平台角色；只有需要进入管理后台、管理身份和
+   全局配置的账号才授予 `admin`。业务数据权限不在 Keycloak 中分配。
+5. 在管理后台打开「工作区成员」，把账号加入目标工作区并分配一个成员角色：
+   - `owner`：管理工作区成员与配置，并拥有该工作区全部业务权限。
    - `curator`：文献导入、资源发现、抽取、映射和候选编辑。
    - `reviewer`：审核、正式标准化和导出。
    - `viewer`：只读检索、统计和溯源。
-5. 至少保留两个管理员账号，首次登录后修改临时密码。
+6. 至少保留两个平台管理员和两个默认工作区 Owner，首次登录后修改临时密码。
 
 「用户与权限」还可以停用账号、重置临时密码和撤销当前登录会话。它通过
 `geochem-admin-api` 最小权限服务账号访问 Keycloak，仅授予查询、查看和管理用户权限，
@@ -157,6 +161,12 @@ Keycloak 的回调地址和 Web Origin。运行 `scripts/export-caddy-ca.sh`，�
 
 管理后台的「存储与配额」显示每个用户的使用量。首次登录自动创建 10 GiB 默认配额；
 管理员可按账号调整。文章及附件按导入者/所有者计费，超过配额的上传会在写盘前被拒绝。
+
+生产环境默认按用户限制每分钟 300 次 API 请求、40 次对话/Agent 请求、每小时 20 次
+上传，以及同时 3 个耗时任务。对应配置为 `GEOCHEM_REQUEST_RATE_PER_MINUTE`、
+`GEOCHEM_CHAT_RATE_PER_MINUTE`、`GEOCHEM_UPLOAD_RATE_PER_HOUR` 和
+`GEOCHEM_MAX_CONCURRENT_TASKS_PER_USER`。限流状态存放在 Redis；生产环境 Redis
+不可用时受保护请求会明确返回服务不可用，而不会静默放开限制。
 
 Mac 本地预览默认不启用 OIDC，页面会明确显示「本地开发模式」并禁用用户写操作；
 这不是生产认证故障。只有局域网 Compose 配置中的 Keycloak 启动后，登录页和真实用户
@@ -359,6 +369,8 @@ unset GEOCHEM_TEST_ACCESS_TOKEN
 
 - [ ] 客户端通过 HTTPS 访问，无证书警告。
 - [ ] viewer、curator、reviewer、admin 权限分别验证。
+- [ ] 两个工作区的测试用户不能互相读取文章、PDF、对话、Agent run、RAG 引用或导出文件。
+- [ ] 工作区 Owner 可以邀请、停用和调整成员角色，且不能删除最后一个 Owner。
 - [ ] `wsl2-login-acceptance.sh` 验证真实管理员登录和管理后台访问通过。
 - [ ] 管理员创建一条加密模型凭据并分配给测试用户；API 响应中只显示指纹。
 - [ ] 测试用户只能调用被分配的模型，Token/费用限制和存储配额能够阻断超限操作。
@@ -366,6 +378,8 @@ unset GEOCHEM_TEST_ACCESS_TOKEN
 - [ ] 所有运行容器均为 `unless-stopped`，日志轮转和 Web/Worker init 验证通过。
 - [ ] `/openapi.json` 在生产环境返回 404，FastAPI 只通过 Caddy 接收请求。
 - [ ] 500 MB PDF 上传时不会使 Web 进程内存暴涨。
+- [ ] 伪造扩展名、MIME 或文件签名的上传被拒绝；上传、对话和普通 API 限流可阻断超限请求。
+- [ ] 单用户超过耗时任务并发上限时得到明确提示，其他用户仍可正常提交任务。
 - [ ] 同一文章重复任务被幂等限制，失败任务可重试。
 - [ ] 重启服务后 Agent checkpoint 和后台任务状态可恢复。
 - [ ] Mac 数据迁移后的文章、资源、候选、审核、标准记录和溯源数量一致。

@@ -2,6 +2,9 @@
 
 Schema-driven AI agent for extracting, standardizing, and curating geochemical data from scientific literature.
 
+# run on mac
+bash scripts/mac-preview.sh
+
 ## Overview
 
 GeoChem Data Curation Agent automates the extraction of geochemical data (major elements, trace elements, isotopic ratios, etc.) from research papers and supplementary materials. It uses a schema-driven approach with multi-provider LLM support to map raw table data to standardized fields, with human review for high-risk mappings.
@@ -118,11 +121,21 @@ for the Mac preview path.
 
 The LAN build includes a Keycloak-backed login page and two separate product
 shells. Ordinary users enter the GeoChem workspace. Administrators choose the
-workspace or the dark management console after every login. The management
-console provides users, fixed roles, encrypted server-side model credentials,
-per-user model/token limits, storage quotas, tasks and audit records. Raw model
-keys are never returned to browsers. Environment-variable model keys remain an
-optional compatibility path, not a LAN setup requirement.
+workspace or the dark management console after every login. Keycloak owns login
+identity and platform administrators; GeoChem's organization/workspace member
+records own business access through `owner`, `curator`, `reviewer` and `viewer`
+roles. The management console provides users, workspace membership, encrypted
+server-side model credentials, per-user model/token limits, storage quotas,
+tasks and audit records. Raw model keys are never returned to browsers.
+Environment-variable model keys remain an optional compatibility path, not a
+LAN setup requirement.
+
+Existing local data migrates in place into a default organization and keeps the
+`DEFAULT_WORKSPACE` project ID. Article, PDF, chat, Agent, RAG and export APIs
+validate workspace membership server-side instead of trusting a project ID from
+the browser. Production Redis-backed user rate limits, upload signature checks
+and per-user task concurrency limits provide the first LAN abuse-protection
+baseline.
 
 The Mac preview renders both shells in an explicit read-only development mode;
 it does not pretend that Keycloak login is active. The first LAN administrator

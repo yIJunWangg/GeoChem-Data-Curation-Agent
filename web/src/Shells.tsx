@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ComponentType } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
-  Activity, BookOpen, Bot, Boxes, ChevronDown, ChevronLeft, ChevronRight,
+  Activity, BookCheck, BookOpen, Bot, Boxes, ChevronDown, ChevronLeft, ChevronRight,
   ClipboardList, Columns3, Database, FileSpreadsheet, FlaskConical, Gauge,
   HardDrive, KeyRound, LayoutDashboard, LogOut, ScrollText, ServerCog,
   Settings, ShieldCheck, SquarePlus, UserRound, Users, Workflow,
@@ -14,10 +14,11 @@ import { useAppStore } from './store'
 type NavEntry = readonly [string, string, ComponentType<{ size?: number }>]
 
 const WORKSPACE_NAV: NavEntry[] = [
-  ['/', '项目概览', Gauge],
+  ['/', '科研助手', Bot],
+  ['/overview', '项目概览', Gauge],
   ['/headers', '表头管理', Columns3],
   ['/workbench', '抽取工作台', Workflow],
-  ['/chat', '对话助手', Bot],
+  ['/rules', '规则中心', BookCheck],
   ['/review', '人工审核', ShieldCheck],
   ['/standardized', '标准化导出', FileSpreadsheet],
   ['/settings', '设置', Settings],
@@ -26,7 +27,9 @@ const WORKSPACE_NAV: NavEntry[] = [
 const ADMIN_NAV: NavEntry[] = [
   ['/admin', '管理概览', LayoutDashboard],
   ['/admin/users', '用户管理', Users],
+  ['/admin/workspaces', '工作区成员', Boxes],
   ['/admin/roles', '角色与权限', ShieldCheck],
+  ['/admin/rules', '规则审批', BookCheck],
   ['/admin/models', '模型与密钥', KeyRound],
   ['/admin/storage', '存储配额', HardDrive],
   ['/admin/tasks', '任务监控', ClipboardList],
@@ -89,28 +92,43 @@ function Sidebar({ entries, collapsed, setCollapsed, admin = false }: {
 
 export function WorkspaceShell() {
   const navigate = useNavigate()
+  const location = useLocation()
+  const auth = useAuth()
   const { projectId, setProjectId, articleId, setArticleId } = useAppStore()
   const [collapsed, setCollapsed] = useState(() => window.localStorage.getItem('geochem.sidebar.collapsed') === 'true')
-  const workspace = useQuery({ queryKey: ['workspace'], queryFn: api.workspace })
+  const previewWorkspace = useQuery({
+    queryKey: ['workspace-preview'],
+    queryFn: api.workspace,
+    enabled: !auth.enabled,
+  })
+  const activeWorkspace = auth.currentWorkspace || previewWorkspace.data
   const articles = useQuery({ queryKey: ['articles', projectId], queryFn: () => api.articles(projectId), enabled: Boolean(projectId) })
-  useEffect(() => { if (workspace.data) setProjectId(workspace.data.project_id) }, [setProjectId, workspace.data])
   useEffect(() => {
-    if (!articleId && articles.data?.length) setArticleId(articles.data[0].article_id)
-  }, [articleId, articles.data, setArticleId])
+    if (activeWorkspace?.project_id && activeWorkspace.project_id !== projectId) {
+      setProjectId(activeWorkspace.project_id)
+      setArticleId('')
+    }
+  }, [activeWorkspace?.project_id, projectId, setArticleId, setProjectId])
   useEffect(() => window.localStorage.setItem('geochem.sidebar.collapsed', String(collapsed)), [collapsed])
 
   return <div className={`app-shell ${collapsed ? 'sidebar-is-collapsed' : ''}`}>
     <Sidebar entries={WORKSPACE_NAV} collapsed={collapsed} setCollapsed={setCollapsed}/>
     <div className="main-shell">
       <header className="topbar">
-        <div className="workspace-state"><BookOpen size={17}/><span>当前工作区</span><strong>{workspace.data?.project_name || '正在载入...'}</strong></div>
+        <div className="workspace-state"><BookOpen size={17}/><span>当前工作区</span><strong>{activeWorkspace?.project_name || '正在载入...'}</strong>{auth.workspaceRole && <small className="workspace-role-badge">{auth.workspaceRole}</small>}</div>
         <div className="topbar-actions">
           <label htmlFor="global-article">当前文献</label>
-          <select id="global-article" value={articleId} onChange={(event) => setArticleId(event.target.value)}>
-            {!articles.data?.length && <option value="">暂无文献</option>}
+          <select
+            id="global-article"
+            value={articleId}
+            onChange={(event) => setArticleId(event.target.value)}
+            disabled={location.pathname === '/'}
+            title={location.pathname === '/' ? '科研助手中的文章需通过对话明确选择' : '切换当前文献'}
+          >
+            <option value="">{articles.data?.length ? '未选择文章' : '暂无文献'}</option>
             {articles.data?.map((article) => <option key={article.article_id} value={article.article_id}>{article.title || article.doi || article.article_id}</option>)}
           </select>
-          <button className="primary-button" onClick={() => navigate('/?panel=import')}><SquarePlus size={17}/> 新建任务</button>
+          <button className="primary-button" onClick={() => navigate('/')}><SquarePlus size={17}/> 新建任务</button>
           <AccountMenu/>
         </div>
       </header>

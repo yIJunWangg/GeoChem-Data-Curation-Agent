@@ -19,6 +19,21 @@ function AuthStateScreen({ kind, message }: { kind: 'loading' | 'error'; message
   </div>
 }
 
+function NoWorkspaceScreen() {
+  const auth = useAuth()
+  return <div className="auth-screen auth-product-screen">
+    <div className="auth-card no-workspace-card">
+      <span className="auth-product-mark"><Users size={24}/></span>
+      <strong>账号尚未分配工作区</strong>
+      <span>请联系 GeoChem 管理员，将你的账号加入一个工作区后再继续。</span>
+      <div className="no-workspace-actions">
+        <button onClick={() => window.location.reload()}>重新检查</button>
+        <button onClick={() => void auth.signOut()}>退出登录</button>
+      </div>
+    </div>
+  </div>
+}
+
 export function AuthGate({ admin = false }: { admin?: boolean }) {
   const auth = useAuth()
   const location = useLocation()
@@ -29,6 +44,7 @@ export function AuthGate({ admin = false }: { admin?: boolean }) {
     return <Navigate to={`/login?returnTo=${encodeURIComponent(returnTo)}`} replace/>
   }
   if (admin && !auth.roles.includes('admin')) return <Navigate to="/" replace/>
+  if (!admin && auth.enabled && !auth.currentWorkspace) return <NoWorkspaceScreen/>
   return <Outlet/>
 }
 

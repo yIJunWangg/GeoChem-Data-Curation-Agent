@@ -9,7 +9,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,14 +27,24 @@ from ..curation.target_headers import TargetHeaderBuilder
 from ..ingestion.file_importer import FileImporter
 from ..ingestion.literature_search import LiteratureSearchService
 from ..ingestion.open_access_resolver import OpenAccessResolver
+from ..mapping_knowledge import MappingKnowledgeService
 from ..workflow import WorkflowRunner
 from ..workbench_service import WorkbenchService
 from ..agent_service import ArticleCurationAgent, RetrievalService
 from ..agent_tools import EntitySelectionInput
 from ..background_tasks import TaskDispatcher
 from ..services.admin_governance import AdminGovernanceService
+from ..services.rule_governance import RuleGovernanceService
+from ..services.workspace_access import WorkspaceAccessService
 from .auth import ApiAuditLogger, AuthenticationMiddleware, GEOCHEM_ROLES
 from .keycloak_admin import KeycloakAdminClient, KeycloakAdminError
+from .rate_limit import ApiRateLimiter
+from .upload_security import (
+    ARTICLE_EXTENSIONS,
+    HEADER_EXTENSIONS,
+    PDF_EXTENSIONS,
+    validate_uploaded_file,
+)
 
 
 UPLOAD_CHUNK_BYTES = 1024 * 1024
@@ -139,6 +149,44 @@ class RuleMemoryPatchRequest(BaseModel):
     source_type: str | None = None
     evidence: str | None = None
     conditions: dict[str, Any] | None = None
+
+
+class RuleSubmissionRequest(BaseModel):
+    source_term: str
+    target_canonical_field: str
+    target_header: str = ""
+    source_unit: str = ""
+    target_unit: str = ""
+    chemical_form: str = ""
+    context: str = ""
+    conversion_formula: str = ""
+    evidence: str = ""
+    notes: str = ""
+    scope: Literal["article", "project", "organization"] = "organization"
+    article_id: str = ""
+    confidence: float = 0.95
+    supersedes_rule_id: str = ""
+
+
+class RuleSubmissionPatchRequest(BaseModel):
+    source_term: str | None = None
+    target_canonical_field: str | None = None
+    target_header: str | None = None
+    source_unit: str | None = None
+    target_unit: str | None = None
+    chemical_form: str | None = None
+    context: str | None = None
+    conversion_formula: str | None = None
+    evidence: str | None = None
+    notes: str | None = None
+    scope: Literal["article", "project", "organization"] | None = None
+    article_id: str | None = None
+    confidence: float | None = None
+    supersedes_rule_id: str | None = None
+
+
+class RuleReviewRequest(BaseModel):
+    comment: str = ""
 
 
 class ElementHitTestRequest(BaseModel):
@@ -401,6 +449,9 @@ class ArticleSourceConfirmRequest(BaseModel):
 
 class AgentHandoffRequest(BaseModel):
     project_id: str
+    presentation: Literal["inline", "full"] = "full"
+    workbench_view: Literal["resources", "extract", "quality"] | None = None
+    workbench_stage: str | None = None
 
 
 class AdminUserCreateRequest(BaseModel):
@@ -462,6 +513,17 @@ class AdminModelAllocationRequest(BaseModel):
 
 class AdminStorageQuotaRequest(BaseModel):
     quota_bytes: int = Field(ge=0)
+
+
+class WorkspaceMemberRequest(BaseModel):
+    user_id: str = Field(min_length=1, max_length=160)
+    role: str = Field(default="viewer", pattern="^(owner|curator|reviewer|viewer)$")
+    status: str = Field(default="active", pattern="^(active|disabled)$")
+
+
+class WorkspaceMemberPatchRequest(BaseModel):
+    role: str | None = Field(default=None, pattern="^(owner|curator|reviewer|viewer)$")
+    status: str | None = Field(default=None, pattern="^(active|disabled)$")
 
 
 class WebRepository:
@@ -924,12 +986,16 @@ def create_app(
     runtime = runtime_settings or load_runtime_settings()
     pm = project_manager or ProjectManager(base_dir=runtime.storage_root)
     service = WorkbenchService(pm)
+    rule_governance = RuleGovernanceService(pm)
     workflow = WorkflowRunner(project_manager=pm)
     repo = WebRepository(pm)
     tasks = TaskDispatcher(pm, runtime)
-    agent = ArticleCurationAgent(pm)
+    agent = ArticleCurationAgent(pm, runtime_settings=runtime)
     keycloak_admin = keycloak_admin_client or KeycloakAdminClient(runtime)
     governance = AdminGovernanceService(pm, runtime)
+    workspace_access = WorkspaceAccessService(pm)
+    workspace_access.bootstrap_default_organization()
+    rate_limiter = ApiRateLimiter(runtime)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -954,6 +1020,8 @@ def create_app(
     app.state.runtime_settings = runtime
     app.state.task_dispatcher = tasks
     app.state.keycloak_admin = keycloak_admin
+    app.state.workspace_access = workspace_access
+    app.state.rate_limiter = rate_limiter
     if runtime.allowed_hosts:
         app.add_middleware(TrustedHostMiddleware, allowed_hosts=runtime.allowed_hosts)
     if runtime.cors_origins:
@@ -968,6 +1036,8 @@ def create_app(
         AuthenticationMiddleware,
         settings=runtime,
         audit_logger=ApiAuditLogger(pm),
+        workspace_access=workspace_access,
+        rate_limiter=rate_limiter,
     )
 
     if not runtime.enable_api_docs:
@@ -980,6 +1050,10 @@ def create_app(
     @app.exception_handler(ValueError)
     async def value_error_handler(request, exc):
         return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+    @app.exception_handler(PermissionError)
+    async def permission_error_handler(request, exc):
+        return JSONResponse(status_code=403, content={"detail": str(exc)})
 
     @app.get("/api/v1/health")
     def health():
@@ -1039,11 +1113,37 @@ def create_app(
         if user is None:
             raise HTTPException(401, "尚未登录。")
         governance.ensure_user_profile(user.subject, user.username, user.email, user.username)
-        return {**user.public_dict(), "policy": governance.user_policy(user.subject)}
+        workspaces = workspace_access.list_workspaces(user.subject, user.roles)
+        current_workspace = workspaces[0] if workspaces else None
+        return {
+            **user.public_dict(),
+            "policy": governance.user_policy(user.subject),
+            "workspaces": workspaces,
+            "current_workspace": current_workspace,
+            "workspace_role": current_workspace.get("workspace_role", "") if current_workspace else "",
+        }
 
     def actor_id(request: Request) -> str:
         user = getattr(request.state, "user", None)
         return str(getattr(user, "subject", "") or "system")
+
+    def actor_roles(request: Request) -> frozenset[str]:
+        user = getattr(request.state, "user", None)
+        return frozenset(getattr(user, "roles", ()) or ())
+
+    def actor_workspace_role(request: Request) -> str:
+        role = str(getattr(request.state, "workspace_role", "") or "")
+        if role:
+            return role
+        return "owner" if runtime.auth_mode != "oidc" else "viewer"
+
+    @app.get("/api/v1/workspaces")
+    def workspaces(request: Request):
+        return {
+            "workspaces": workspace_access.list_workspaces(
+                actor_id(request), actor_roles(request)
+            )
+        }
 
     def storage_owner(request: Request, article_id: str = "") -> str:
         """Resolve the stable account charged for a project upload."""
@@ -1145,6 +1245,69 @@ def create_app(
                 ),
             )
         return result
+
+    @app.get("/api/v1/admin/workspaces/{project_id}/members")
+    def admin_workspace_members(project_id: str, request: Request):
+        workspace_access.require(
+            project_id, actor_id(request), actor_roles(request), "manage"
+        )
+        return {"members": workspace_access.list_members(project_id)}
+
+    @app.post("/api/v1/admin/workspaces/{project_id}/members")
+    def add_admin_workspace_member(
+        project_id: str,
+        payload: WorkspaceMemberRequest,
+        request: Request,
+    ):
+        workspace_access.require(
+            project_id, actor_id(request), actor_roles(request), "manage"
+        )
+        return workspace_access.upsert_member(
+            project_id,
+            payload.user_id,
+            payload.role,
+            actor_id(request),
+            status=payload.status,
+        )
+
+    @app.patch("/api/v1/admin/workspaces/{project_id}/members/{user_id}")
+    def update_admin_workspace_member(
+        project_id: str,
+        user_id: str,
+        payload: WorkspaceMemberPatchRequest,
+        request: Request,
+    ):
+        workspace_access.require(
+            project_id, actor_id(request), actor_roles(request), "manage"
+        )
+        existing = next(
+            (
+                item for item in workspace_access.list_members(project_id)
+                if item.get("user_id") == user_id
+            ),
+            None,
+        )
+        if not existing:
+            raise ValueError("工作区成员不存在。")
+        return workspace_access.upsert_member(
+            project_id,
+            user_id,
+            payload.role or str(existing.get("role") or "viewer"),
+            actor_id(request),
+            status=payload.status or str(existing.get("status") or "active"),
+        )
+
+    @app.delete("/api/v1/admin/workspaces/{project_id}/members/{user_id}")
+    def delete_admin_workspace_member(
+        project_id: str,
+        user_id: str,
+        request: Request,
+    ):
+        workspace_access.require(
+            project_id, actor_id(request), actor_roles(request), "manage"
+        )
+        workspace_access.remove_member(project_id, user_id)
+        return {"status": "deleted", "project_id": project_id, "user_id": user_id}
 
     @app.get("/api/v1/admin/overview")
     def admin_overview():
@@ -1393,6 +1556,12 @@ def create_app(
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir) / safe_name
             written = await _persist_upload(file, temp_path, runtime.max_upload_mb)
+            validate_uploaded_file(
+                temp_path,
+                safe_name,
+                file.content_type,
+                allowed_extensions=PDF_EXTENSIONS,
+            )
             owner_id = storage_owner(request)
             require_storage_capacity(owner_id, written)
             db = pm.get_database(project_id)
@@ -1440,7 +1609,13 @@ def create_app(
 
     @app.post("/api/v1/agent-runs/{run_id}/handoff")
     def handoff_agent_run(run_id: str, request: AgentHandoffRequest):
-        return agent.handoff(request.project_id, run_id)
+        return agent.handoff(
+            request.project_id,
+            run_id,
+            presentation=request.presentation,
+            workbench_view=request.workbench_view,
+            workbench_stage=request.workbench_stage,
+        )
 
     @app.post("/api/v1/agent-runs/{run_id}/resume-from-workbench")
     def resume_agent_from_workbench(run_id: str, request: AgentHandoffRequest):
@@ -1548,6 +1723,12 @@ def create_app(
         _config, project_dir = pm.load_project(project_id)
         temp_path = _temporary_upload_path(file.filename, "headers.csv")
         written = await _persist_upload(file, temp_path, runtime.max_upload_mb)
+        validate_uploaded_file(
+            temp_path,
+            file.filename or "headers.csv",
+            file.content_type,
+            allowed_extensions=HEADER_EXTENSIONS,
+        )
         owner_id = storage_owner(request)
         require_storage_capacity(owner_id, written)
         try:
@@ -1641,6 +1822,12 @@ def create_app(
         _config, project_dir = pm.load_project(project_id)
         temp_path = _temporary_upload_path(file.filename, "upload.bin")
         written = await _persist_upload(file, temp_path, runtime.max_upload_mb)
+        validate_uploaded_file(
+            temp_path,
+            file.filename or "upload.bin",
+            file.content_type,
+            allowed_extensions=ARTICLE_EXTENSIONS,
+        )
         owner_id = storage_owner(request, article_id)
         require_storage_capacity(owner_id, written)
         db = pm.get_database(project_id)
@@ -1662,6 +1849,12 @@ def create_app(
         _config, project_dir = pm.load_project(project_id)
         temp_path = _temporary_upload_path(file.filename, "article.pdf")
         written = await _persist_upload(file, temp_path, runtime.max_upload_mb)
+        validate_uploaded_file(
+            temp_path,
+            file.filename or "article.pdf",
+            file.content_type,
+            allowed_extensions=ARTICLE_EXTENSIONS,
+        )
         owner_id = storage_owner(request)
         require_storage_capacity(owner_id, written)
         db = pm.get_database(project_id)
@@ -1727,6 +1920,46 @@ def create_app(
     @app.get("/api/v1/model-capabilities")
     def model_capabilities():
         return service.model_capabilities()
+
+    @app.get("/api/v1/mapping-knowledge/search")
+    def mapping_knowledge_search(project_id: str, q: str, limit: int = Query(20, ge=1, le=100)):
+        db = pm.get_database(project_id)
+        try:
+            return MappingKnowledgeService(db).search(q, limit)
+        finally:
+            db.close()
+
+    @app.get("/api/v1/mapping-knowledge/releases/current")
+    def current_mapping_knowledge_release(project_id: str):
+        db = pm.get_database(project_id)
+        try:
+            return MappingKnowledgeService(db).current_release()
+        finally:
+            db.close()
+
+    @app.post("/api/v1/admin/mapping-knowledge/sync")
+    def sync_mapping_knowledge(project_id: str, request: Request):
+        db = pm.get_database(project_id)
+        try:
+            return MappingKnowledgeService(db).stage_builtin_sync(actor_id(request))
+        finally:
+            db.close()
+
+    @app.get("/api/v1/admin/mapping-knowledge/imports/{import_id}/diff")
+    def mapping_knowledge_import_diff(import_id: str, project_id: str):
+        db = pm.get_database(project_id)
+        try:
+            return MappingKnowledgeService(db).import_diff(import_id)
+        finally:
+            db.close()
+
+    @app.post("/api/v1/admin/mapping-knowledge/imports/{import_id}/publish")
+    def publish_mapping_knowledge_import(import_id: str, project_id: str):
+        db = pm.get_database(project_id)
+        try:
+            return MappingKnowledgeService(db).publish_import(import_id)
+        finally:
+            db.close()
 
     @app.post("/api/v1/model-benchmarks/header-mapping")
     def header_mapping_benchmark(project_id: str):
@@ -2080,8 +2313,167 @@ def create_app(
         return repo.reviews(project_id)
 
     @app.get("/api/v1/rules")
-    def rules(project_id: str):
-        return service.rule_memory(project_id)
+    def rules(
+        project_id: str,
+        q: str = "",
+        scope: str = "",
+        status: str = "confirmed",
+        chemical_form: str = "",
+        submitter: str = "",
+        limit: int = 500,
+    ):
+        return rule_governance.list_rules(
+            project_id,
+            q=q,
+            scope=scope,
+            status=status,
+            chemical_form=chemical_form,
+            submitter=submitter,
+            limit=limit,
+        )
+
+    @app.get("/api/v1/rules/{rule_id}")
+    def rule_detail(rule_id: str, project_id: str):
+        return rule_governance.rule(project_id, rule_id)
+
+    @app.get("/api/v1/rules/{rule_id}/history")
+    def rule_history(rule_id: str, project_id: str):
+        return {"items": rule_governance.rule_history(project_id, rule_id)}
+
+    @app.get("/api/v1/rule-submissions")
+    def rule_submissions(
+        request: Request,
+        project_id: str,
+        status: str = "",
+        mine: bool = False,
+        q: str = "",
+        limit: int = 500,
+    ):
+        if not rule_governance.can_approve(actor_workspace_role(request), actor_roles(request)):
+            mine = True
+        return rule_governance.list_submissions(
+            project_id,
+            actor_id(request),
+            status=status,
+            mine=mine,
+            q=q,
+            limit=limit,
+        )
+
+    @app.post("/api/v1/rule-submissions")
+    def create_rule_submission(request: Request, payload: RuleSubmissionRequest, project_id: str):
+        return rule_governance.create_submission(
+            project_id,
+            actor_id(request),
+            actor_workspace_role(request),
+            actor_roles(request),
+            payload.model_dump(),
+        )
+
+    @app.patch("/api/v1/rule-submissions/{submission_id}")
+    def update_rule_submission(
+        submission_id: str,
+        request: Request,
+        payload: RuleSubmissionPatchRequest,
+        project_id: str,
+    ):
+        return rule_governance.update_submission(
+            project_id,
+            submission_id,
+            actor_id(request),
+            payload.model_dump(exclude_none=True),
+        )
+
+    @app.post("/api/v1/rule-submissions/{submission_id}/submit")
+    def submit_rule_submission(submission_id: str, request: Request, project_id: str):
+        return rule_governance.submit(project_id, submission_id, actor_id(request))
+
+    @app.post("/api/v1/rule-imports")
+    async def import_rules(
+        request: Request,
+        project_id: str,
+        file: UploadFile = File(...),
+    ):
+        safe_name = _safe_upload_name(file.filename, "mapping-rules.csv")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir) / safe_name
+            await _persist_upload(file, temp_path, runtime.max_upload_mb)
+            validate_uploaded_file(
+                temp_path,
+                safe_name,
+                file.content_type,
+                allowed_extensions=HEADER_EXTENSIONS,
+            )
+            return rule_governance.import_file(
+                project_id,
+                actor_id(request),
+                actor_workspace_role(request),
+                actor_roles(request),
+                temp_path,
+                safe_name,
+            )
+
+    @app.get("/api/v1/rule-imports/{import_id}/preview")
+    def rule_import_preview(import_id: str, request: Request, project_id: str):
+        return rule_governance.import_preview(
+            project_id,
+            import_id,
+            actor_id=actor_id(request),
+            can_view_all=rule_governance.can_approve(
+                actor_workspace_role(request),
+                actor_roles(request),
+            ),
+        )
+
+    @app.get("/api/v1/admin/rule-submissions")
+    def admin_rule_submissions(
+        request: Request,
+        project_id: str,
+        status: str = "pending",
+        q: str = "",
+        limit: int = 500,
+    ):
+        if not rule_governance.can_approve(actor_workspace_role(request), actor_roles(request)):
+            raise PermissionError("只有组织 Owner 或平台管理员可以查看审批队列。")
+        return rule_governance.list_submissions(
+            project_id,
+            actor_id(request),
+            status=status,
+            q=q,
+            limit=limit,
+        )
+
+    @app.post("/api/v1/admin/rule-submissions/{submission_id}/approve")
+    def approve_rule_submission(
+        submission_id: str,
+        request: Request,
+        payload: RuleReviewRequest,
+        project_id: str,
+    ):
+        return rule_governance.approve(
+            project_id,
+            submission_id,
+            actor_id(request),
+            actor_workspace_role(request),
+            actor_roles(request),
+            payload.comment,
+        )
+
+    @app.post("/api/v1/admin/rule-submissions/{submission_id}/reject")
+    def reject_rule_submission(
+        submission_id: str,
+        request: Request,
+        payload: RuleReviewRequest,
+        project_id: str,
+    ):
+        return rule_governance.reject(
+            project_id,
+            submission_id,
+            actor_id(request),
+            actor_workspace_role(request),
+            actor_roles(request),
+            payload.comment,
+        )
 
     @app.get("/api/v1/rule-memory")
     def rule_memory(project_id: str, article_id: str | None = None):

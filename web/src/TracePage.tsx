@@ -3,11 +3,11 @@ import { useQuery } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import { AgGridReact } from 'ag-grid-react'
 import type { CellClickedEvent, ColDef } from 'ag-grid-community'
-import { Columns3, FileCheck2, PanelRightOpen, RotateCcw, Search } from 'lucide-react'
+import { FileCheck2, PanelRightOpen, Search } from 'lucide-react'
 import { api } from './api'
 import { PdfEvidenceViewer, type PdfEvidence } from './PdfEvidenceViewer'
-import { ResizableSplit } from './ResizableSplit'
 import { useAppStore } from './store'
+import { ContextDrawer } from './WorkspaceUI'
 import type { TraceField, TraceRecordDetail, TraceRecordSummary } from './types'
 
 type StandardizedApiRow = {
@@ -24,8 +24,6 @@ type StandardizedGridRow = Record<string, string> & {
   __article_title: string
   __processed_at: string
 }
-
-type LayoutMode = 'balanced' | 'table' | 'pdf'
 
 function traceChain(detail?: TraceRecordDetail, field?: TraceField | null) {
   if (!field) return <div className="trace-incomplete">选择表格中的非空单元格后查看完整溯源链。</div>
@@ -51,7 +49,8 @@ export function StandardizedTraceView() {
   const [activeRecordId, setActiveRecordId] = useState(searchParams.get('record_id') || searchParams.get('record') || '')
   const [requestedField, setRequestedField] = useState(searchParams.get('field') || '')
   const [activeField, setActiveField] = useState<TraceField | null>(null)
-  const [layout, setLayout] = useState<LayoutMode>('balanced')
+  const [evidenceOpen, setEvidenceOpen] = useState(Boolean(searchParams.get('record_id') || searchParams.get('record')))
+  const [evidenceFocused, setEvidenceFocused] = useState(false)
   const detailQuery = useQuery({
     queryKey: ['trace-record', projectId, activeRecordId],
     queryFn: () => api.traceRecord(projectId, activeRecordId) as Promise<TraceRecordDetail>,
@@ -126,6 +125,7 @@ export function StandardizedTraceView() {
     setActiveRecordId(event.data.__record_id)
     if (!field.startsWith('__')) setRequestedField(field)
     else setRequestedField('')
+    setEvidenceOpen(true)
   }
   const evidence = activeField?.source as PdfEvidence | null
   const gridPanel = <section className="panel review-grid-panel"><div className="ag-theme-quartz review-grid standardized-review-grid"><AgGridReact<StandardizedGridRow>
@@ -137,18 +137,29 @@ export function StandardizedTraceView() {
     onCellClicked={selectCell}
     tooltipShowDelay={250}
   /></div></section>
-  const pdfPanel = <aside className="panel review-pdf-panel"><PdfEvidenceViewer projectId={projectId} resources={detailQuery.data?.resources || []} evidence={evidence} details={traceChain(detailQuery.data, activeField)} onRequestFocus={() => setLayout(layout === 'pdf' ? 'balanced' : 'pdf')}/></aside>
-
   return <div className="standardized-trace-view">
     <div className="review-toolbar">
       <select value={articleFilter} onChange={(event) => { setArticleFilter(event.target.value); setActiveRecordId(''); setActiveField(null) }}><option value="">全部文章</option>{(articles.data || []).map((article) => <option key={article.article_id} value={article.article_id}>{article.title || article.article_id}</option>)}</select>
       <div className="search-box"><Search size={15}/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索文章、SampleID、字段或值"/></div>
       <span className="review-count">{gridRows.length} 条标准化记录 · {fieldNames.length} 个非空字段</span><div className="toolbar-spacer"/>
-      <button className="icon-button" title="聚焦表格" onClick={() => setLayout('table')}><Columns3 size={16}/></button>
-      <button className="icon-button" title="恢复分栏" onClick={() => setLayout('balanced')}><RotateCcw size={16}/></button>
-      <button className="icon-button" title="聚焦 PDF" onClick={() => setLayout('pdf')}><PanelRightOpen size={16}/></button>
+      <button className="icon-button" title="查看当前溯源" disabled={!activeRecordId} onClick={() => setEvidenceOpen(true)}><PanelRightOpen size={16}/></button>
     </div>
-    {layout === 'balanced' ? <ResizableSplit storageKey="geochem.review.standardized.split" className="review-workspace" left={gridPanel} right={pdfPanel} minLeft={480} minRight={420}/> : <div className={`review-workspace layout-${layout}`}>{layout === 'table' ? gridPanel : pdfPanel}</div>}
+    <div className="review-content-shell">
+      <div className="review-content-main">{gridPanel}</div>
+      <ContextDrawer
+        open={evidenceOpen}
+        title={activeField ? `${activeField.target_header} · 完整溯源` : '标准化记录溯源'}
+        onClose={() => { setEvidenceOpen(false); setEvidenceFocused(false) }}
+        focused={evidenceFocused}
+        onFocusedChange={setEvidenceFocused}
+        storageKey="geochem.review.standardized.evidence.width"
+        defaultWidth={660}
+        minWidth={440}
+        maxWidth={1120}
+      >
+        <PdfEvidenceViewer projectId={projectId} resources={detailQuery.data?.resources || []} evidence={evidence} details={traceChain(detailQuery.data, activeField)}/>
+      </ContextDrawer>
+    </div>
   </div>
 }
 

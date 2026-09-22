@@ -61,6 +61,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+geochem = ["data/*.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests/unit"]
 pythonpath = ["src"]

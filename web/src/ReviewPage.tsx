@@ -1,23 +1,20 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { AgGridReact } from 'ag-grid-react'
 import type { CellClickedEvent, ColDef, SelectionChangedEvent } from 'ag-grid-community'
 import {
-  Columns3, FileText, Image, Maximize2, PanelRightOpen, RotateCcw,
-  Search, ShieldCheck, ShieldX, Table2,
+  FileText, Image, PanelRightOpen, Search, ShieldCheck, ShieldX, Table2,
 } from 'lucide-react'
 import { api } from './api'
 import { PdfEvidenceViewer, type PdfEvidence } from './PdfEvidenceViewer'
-import { ResizableSplit } from './ResizableSplit'
 import { StandardizedTraceView } from './TracePage'
 import { useAppStore } from './store'
+import { CompactEmptyState, ContextDrawer, PageCommandBar } from './WorkspaceUI'
 import type { CandidateCell, CandidateRecord, DocumentElement, EvidenceSource } from './types'
 
 type Header = { display_header: string; canonical_field: string; target_unit: string }
 type CandidatePayload = { headers: Header[]; records: CandidateRecord[] }
-type LayoutMode = 'balanced' | 'table' | 'pdf'
-
 const sourceLabel = (type?: string) => type === 'table' ? '表格' : type === 'figure' ? '图像' : '段落'
 const SourceIcon = ({ type }: { type?: string }) => type === 'table' ? <Table2 size={12}/> : type === 'figure' ? <Image size={12}/> : <FileText size={12}/>
 
@@ -73,6 +70,7 @@ function recordSources(record: CandidateRecord, elements: Map<string, DocumentEl
 
 export function ReviewPage() {
   const { projectId, articleId } = useAppStore()
+  const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const reviewMode = searchParams.get('mode') === 'standardized' ? 'standardized' : 'candidate'
   const queryClient = useQueryClient()
@@ -85,7 +83,8 @@ export function ReviewPage() {
   const elementsQuery = useQuery({ queryKey: ['elements', projectId, articleId], queryFn: () => api.elements(projectId, articleId), enabled: Boolean(projectId && articleId) })
   const [selectedRows, setSelectedRows] = useState<string[]>([])
   const [activeEvidence, setActiveEvidence] = useState<PdfEvidence | null>(null)
-  const [layout, setLayout] = useState<LayoutMode>('balanced')
+  const [evidenceOpen, setEvidenceOpen] = useState(false)
+  const [evidenceFocused, setEvidenceFocused] = useState(false)
   const [columnMode, setColumnMode] = useState<'data' | 'all'>('data')
   const [group, setGroup] = useState('all')
   const [risk, setRisk] = useState('all')
@@ -107,13 +106,6 @@ export function ReviewPage() {
     return true
   }), [risk, rows, search, status])
 
-  useEffect(() => {
-    if (!activeEvidence && rows.length) {
-      const first = Object.values(rows[0].cells || {}).find((cell) => cell.element_id)
-      if (first) setActiveEvidence(cellEvidence(first, elements))
-    }
-  }, [activeEvidence, elements, rows])
-
   const refresh = () => queryClient.invalidateQueries({ queryKey: ['candidate-records', projectId, articleId] })
   const applyToSelected = async (action: 'approve' | 'reject') => {
     await Promise.all(selectedRows.map((recordId) => action === 'approve' ? api.approveRecord(projectId, recordId) : api.rejectRecord(projectId, recordId)))
@@ -124,7 +116,7 @@ export function ReviewPage() {
   const columns = useMemo<ColDef<CandidateRecord>[]>(() => {
     const sourceColumn: ColDef<CandidateRecord> = {
       colId: '__source', headerName: '原文', pinned: 'left', width: 150, minWidth: 130, sortable: false, filter: false,
-      cellRenderer: ({ data }: { data?: CandidateRecord }) => <div className="source-chip-list">{data && recordSources(data, elements).map(({ source, cell }) => <button key={source.element_id} className={`source-chip ${source.element_type}`} title={`${sourceLabel(source.element_type)}，第 ${source.page_number || '?'} 页`} onClick={(event) => { event.stopPropagation(); setActiveEvidence(cellEvidence(cell, elements)) }}><SourceIcon type={source.element_type}/>{sourceLabel(source.element_type)} p{source.page_number || '?'}</button>)}</div>,
+      cellRenderer: ({ data }: { data?: CandidateRecord }) => <div className="source-chip-list">{data && recordSources(data, elements).map(({ source, cell }) => <button key={source.element_id} className={`source-chip ${source.element_type}`} title={`${sourceLabel(source.element_type)}，第 ${source.page_number || '?'} 页`} onClick={(event) => { event.stopPropagation(); setActiveEvidence(cellEvidence(cell, elements)); setEvidenceOpen(true) }}><SourceIcon type={source.element_type}/>{sourceLabel(source.element_type)} p{source.page_number || '?'}</button>)}</div>,
     }
     const dataColumns = displayedHeaders.map<ColDef<CandidateRecord>>((header) => ({
       field: `data.${header.display_header}`, colId: header.display_header, headerName: header.display_header,
@@ -166,7 +158,10 @@ export function ReviewPage() {
   const onCellClicked = (event: CellClickedEvent<CandidateRecord>) => {
     const header = event.column.getColId()
     const cell = event.data?.cells?.[header]
-    if (cell) setActiveEvidence(cellEvidence(cell, elements))
+    if (cell) {
+      setActiveEvidence(cellEvidence(cell, elements))
+      setEvidenceOpen(true)
+    }
   }
   const onCellValueChanged = async (event: any) => {
     const header = event.column?.getColId?.()
@@ -193,8 +188,8 @@ export function ReviewPage() {
     <button className={reviewMode === 'standardized' ? 'active' : ''} onClick={() => setReviewMode('standardized')}>已标准化数据回查</button>
   </div>
 
-  if (reviewMode === 'standardized') return <div className="page review-page">
-    <div className="page-title-row review-title-row"><div><h1>人工审核</h1><p>回查已标准化数据，点击任意单元格定位原始 PDF、映射和换算过程。</p></div>{modeSwitch}</div>
+  if (reviewMode === 'standardized') return <div className="page review-page gpt-workspace-page">
+    <PageCommandBar title="人工审核" description="已标准化数据回查" status={modeSwitch}/>
     <StandardizedTraceView/>
   </div>
 
@@ -213,12 +208,27 @@ export function ReviewPage() {
       tooltipShowDelay={250}
     /></div>
   </section>
-  const pdfPanel = <aside className="panel review-pdf-panel">
-    <PdfEvidenceViewer projectId={projectId} resources={resources.data || []} evidence={activeEvidence} onRequestFocus={() => setLayout(layout === 'pdf' ? 'balanced' : 'pdf')}/>
-  </aside>
-
-  return <div className="page review-page">
-    <div className="page-title-row review-title-row"><div><h1>人工审核</h1><p>逐行确认候选数据，点击原文标签或单元格核对 PDF 证据。</p></div><div className="review-title-actions">{modeSwitch}<div className="review-actions">
+  const reviewMain = recordsQuery.isLoading
+    ? <CompactEmptyState icon={FileText} title="正在读取候选数据" description="加载当前文章的候选记录与证据。"/>
+    : !articleId
+      ? <CompactEmptyState icon={FileText} title="先选择一篇文章" description="从顶部“当前文献”选择文章后，这里会显示待审核候选表。"/>
+      : rows.length === 0
+        ? <CompactEmptyState
+          icon={ShieldCheck}
+          title="当前文章没有待审核候选数据"
+          description="可先在抽取工作台生成候选记录，再回到这里逐项审核。"
+          action={<button className="primary-button" onClick={() => navigate('/workbench')}>前往抽取工作台</button>}
+        />
+        : filteredRows.length === 0
+          ? <CompactEmptyState
+            icon={Search}
+            title="当前筛选没有匹配记录"
+            description="清除搜索或风险、状态筛选后再查看。"
+            action={<button onClick={() => { setSearch(''); setRisk('all'); setStatus('all') }}>清除筛选</button>}
+          />
+          : gridPanel
+  return <div className="page review-page gpt-workspace-page">
+    <PageCommandBar title="人工审核" description={`${filteredRows.length} 行候选数据`} status={modeSwitch}><div className="review-actions">
       <button disabled={!selectedRows.length} onClick={() => applyToSelected('reject')}><ShieldX size={15}/>拒绝 ({selectedRows.length})</button>
       <button className="primary-button" disabled={!selectedRows.length} onClick={() => applyToSelected('approve')}><ShieldCheck size={15}/>通过 ({selectedRows.length})</button>
       <button className="primary-button" onClick={async () => {
@@ -228,7 +238,7 @@ export function ReviewPage() {
         queryClient.invalidateQueries({ queryKey: ['trace-records', projectId] })
         queryClient.invalidateQueries({ queryKey: ['candidate-records', projectId, articleId] })
       }}>生成标准化记录</button>
-    </div></div></div>
+    </div></PageCommandBar>
     <div className="review-toolbar">
       <div className="search-box"><Search size={15}/><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索 SampleID 或值"/></div>
       <select value={columnMode} onChange={(event) => setColumnMode(event.target.value as 'data' | 'all')}><option value="data">有值/待审核字段</option><option value="all">全部156字段</option></select>
@@ -236,10 +246,23 @@ export function ReviewPage() {
       <select value={risk} onChange={(event) => setRisk(event.target.value)}><option value="all">全部风险</option><option value="high">高风险</option><option value="medium">中风险</option><option value="low">低风险</option></select>
       <select value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">全部审核状态</option><option value="pending">待审核</option><option value="approved">已通过</option><option value="rejected">已拒绝</option></select>
       <div className="toolbar-spacer"/><span className="review-count">{filteredRows.length} 行 · {displayedHeaders.length + 2} 列</span>
-      <button className="icon-button" title="聚焦表格" onClick={() => setLayout('table')}><Columns3 size={16}/></button>
-      <button className="icon-button" title="恢复分栏" onClick={() => setLayout('balanced')}><RotateCcw size={16}/></button>
-      <button className="icon-button" title="聚焦 PDF" onClick={() => setLayout('pdf')}><PanelRightOpen size={16}/></button>
+      <button className="icon-button" title="查看当前证据" disabled={!activeEvidence} onClick={() => setEvidenceOpen(true)}><PanelRightOpen size={16}/></button>
     </div>
-    {layout === 'balanced' ? <ResizableSplit storageKey="geochem.review.candidate.split" className="review-workspace" left={gridPanel} right={pdfPanel} minLeft={480} minRight={420}/> : <div className={`review-workspace layout-${layout}`}>{layout === 'table' ? gridPanel : pdfPanel}<button className="workspace-restore" onClick={() => setLayout('balanced')}><Maximize2 size={15}/>恢复双栏</button></div>}
+    <div className="review-content-shell">
+      <div className="review-content-main">{reviewMain}</div>
+      <ContextDrawer
+        open={evidenceOpen}
+        title={activeEvidence?.target_header ? `${activeEvidence.target_header} · 证据` : '原文证据'}
+        onClose={() => { setEvidenceOpen(false); setEvidenceFocused(false) }}
+        focused={evidenceFocused}
+        onFocusedChange={setEvidenceFocused}
+        storageKey="geochem.review.evidence.width"
+        defaultWidth={620}
+        minWidth={420}
+        maxWidth={1100}
+      >
+        <PdfEvidenceViewer projectId={projectId} resources={resources.data || []} evidence={activeEvidence}/>
+      </ContextDrawer>
+    </div>
   </div>
 }

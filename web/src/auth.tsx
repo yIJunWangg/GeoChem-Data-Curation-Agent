@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { UserManager, WebStorageStateStore, type User } from 'oidc-client-ts'
 import { setApiAccessToken } from './api'
+import type { Workspace } from './types'
 
 export type AuthConfig = {
   enabled: boolean
@@ -18,6 +19,9 @@ type AuthState = {
   user?: User
   username: string
   roles: string[]
+  workspaces: Workspace[]
+  currentWorkspace?: Workspace
+  workspaceRole: string
   signIn: (returnUrl?: string) => Promise<void>
   signOut: () => Promise<void>
   enterPreview: (role: 'admin' | 'curator') => void
@@ -30,12 +34,20 @@ const AuthContext = createContext<AuthState>({
   authenticated: false,
   username: '',
   roles: [],
+  workspaces: [],
+  workspaceRole: '',
   signIn: async () => undefined,
   signOut: async () => undefined,
   enterPreview: () => undefined,
 })
 
 const PREVIEW_ROLE_KEY = 'geochem.auth.preview-role'
+
+type BackendIdentity = {
+  workspaces?: Workspace[]
+  current_workspace?: Workspace | null
+  workspace_role?: string
+}
 
 function claimsRoles(user?: User): string[] {
   const profile = user?.profile as Record<string, any> | undefined
@@ -55,6 +67,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [config, setConfig] = useState<AuthConfig>()
   const [user, setUser] = useState<User>()
   const [backendVerified, setBackendVerified] = useState(false)
+  const [backendIdentity, setBackendIdentity] = useState<BackendIdentity>()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [previewRole, setPreviewRole] = useState<'admin' | 'curator' | ''>(() => {
@@ -92,6 +105,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!value.enabled) {
           setApiAccessToken('')
           setBackendVerified(true)
+          setBackendIdentity(undefined)
           setLoading(false)
         }
       })
@@ -113,6 +127,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(next)
       setApiAccessToken(next?.access_token || '')
       setBackendVerified(false)
+      setBackendIdentity(undefined)
       if (!next) {
         setLoading(false)
         return
@@ -133,8 +148,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
           throw new Error(detail || `HTTP ${response.status}`)
         }
+        const identity = await response.json() as BackendIdentity
         if (!cancelled) {
           setBackendVerified(true)
+          setBackendIdentity(identity)
           setError('')
         }
       } catch (reason) {
@@ -200,6 +217,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       ? String(user?.profile?.preferred_username || user?.profile?.name || user?.profile?.email || '')
       : previewRole === 'admin' ? 'Local Administrator' : previewRole === 'curator' ? 'Local Researcher' : '',
     roles: config?.enabled ? claimsRoles(user) : previewRole === 'admin' ? ['admin'] : previewRole === 'curator' ? ['curator'] : [],
+    workspaces: config?.enabled ? backendIdentity?.workspaces || [] : [],
+    currentWorkspace: config?.enabled ? backendIdentity?.current_workspace || undefined : undefined,
+    workspaceRole: config?.enabled
+      ? String(backendIdentity?.workspace_role || '')
+      : previewRole === 'admin' ? 'owner' : previewRole === 'curator' ? 'curator' : '',
     signIn: async (returnUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`) => {
       if (!manager) return
       await manager.signinRedirect({
@@ -209,6 +231,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     signOut: async () => {
       setApiAccessToken('')
       setBackendVerified(false)
+      setBackendIdentity(undefined)
       if (manager) {
         await manager.signoutRedirect()
         return
@@ -220,7 +243,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       window.sessionStorage.setItem(PREVIEW_ROLE_KEY, role)
       setPreviewRole(role)
     },
-  }), [backendVerified, config?.enabled, error, loading, manager, previewRole, user])
+  }), [backendIdentity, backendVerified, config?.enabled, error, loading, manager, previewRole, user])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

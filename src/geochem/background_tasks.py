@@ -51,6 +51,9 @@ class WorkflowTaskStore:
         task_type: str,
         operation_name: str,
         payload: dict[str, Any],
+        *,
+        actor_user_id: str = "",
+        max_active_tasks: int = 0,
     ) -> tuple[str, bool]:
         task_key = _task_key(project_id, article_id, task_type)
         db = self.pm.get_database(project_id)
@@ -65,16 +68,34 @@ class WorkflowTaskStore:
             )
             if active:
                 return str(active["task_id"]), False
+            if actor_user_id and max_active_tasks > 0:
+                task_count = int((db.fetch_one(
+                    """SELECT COUNT(*) AS count FROM workflow_tasks
+                       WHERE created_by_user_id=? AND status IN ('pending','running')""",
+                    (actor_user_id,),
+                ) or {"count": 0})["count"])
+                run_count = int((db.fetch_one(
+                    """SELECT COUNT(*) AS count FROM agent_runs
+                       WHERE created_by_user_id=?
+                         AND status IN ('pending','running','waiting_user','waiting_workbench')""",
+                    (actor_user_id,),
+                ) or {"count": 0})["count"])
+                if task_count + run_count >= max_active_tasks:
+                    raise ValueError(
+                        f"当前账号已有 {task_count + run_count} 个进行中的任务，"
+                        f"并发上限为 {max_active_tasks}。请等待任务完成或先取消旧任务。"
+                    )
             task_id = f"TASK_{uuid4().hex.upper()}"
             try:
                 db.execute(
                     """INSERT INTO workflow_tasks
-                       (task_id, project_id, article_id, task_type, status, progress,
+                       (task_id, project_id, created_by_user_id, article_id, task_type, status, progress,
                         message, operation_name, payload_json, task_key, created_at)
-                       VALUES (?, ?, ?, ?, 'pending', 0, '等待执行', ?, ?, ?, ?)""",
+                       VALUES (?, ?, ?, ?, ?, 'pending', 0, '等待执行', ?, ?, ?, ?)""",
                     (
                         task_id,
                         project_id,
+                        actor_user_id,
                         article_id,
                         task_type,
                         operation_name,
@@ -353,7 +374,7 @@ if celery_app is not None:
 
         runtime = load_runtime_settings()
         pm = ProjectManager(base_dir=runtime.storage_root)
-        agent = ArticleCurationAgent(pm)
+        agent = ArticleCurationAgent(pm, runtime_settings=runtime)
         try:
             with user_execution_context(str(invocation.get("actor_user_id") or "")):
                 if invocation.get("kind") == "resume":
@@ -393,7 +414,13 @@ class TaskDispatcher:
         if actor_user_id:
             data.setdefault("_actor_user_id", actor_user_id)
         task_id, created = self.store.create_or_active(
-            project_id, article_id, task_type, operation_name, data
+            project_id,
+            article_id,
+            task_type,
+            operation_name,
+            data,
+            actor_user_id=actor_user_id,
+            max_active_tasks=self.runtime.max_concurrent_tasks_per_user,
         )
         if not created:
             return task_id

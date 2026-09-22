@@ -8,7 +8,9 @@ from geochem.core.postgres_migration import schema_table_order, sqlite_tables
 def test_schema_table_order_contains_fts_after_documents():
     tables = schema_table_order()
 
-    assert tables[0] == "projects"
+    assert tables[0] == "organizations"
+    assert tables.index("organizations") < tables.index("projects")
+    assert tables.index("organizations") < tables.index("organization_members")
     assert "workflow_tasks" in tables
     assert "agent_run_events" in tables
     assert tables.index("retrieval_fts") == tables.index("retrieval_documents") + 1

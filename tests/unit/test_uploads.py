@@ -10,6 +10,11 @@ from geochem.core.project import ProjectManager
 from geochem.core.runtime import load_runtime_settings
 from geochem.services.admin_governance import AdminGovernanceService
 from geochem.web.api import _persist_upload, _safe_upload_name, create_app
+from geochem.web.upload_security import (
+    HEADER_EXTENSIONS,
+    PDF_EXTENSIONS,
+    validate_uploaded_file,
+)
 
 
 def test_safe_upload_name_removes_client_path_and_unsafe_characters():
@@ -38,6 +43,42 @@ def test_persist_upload_rejects_oversized_file_and_removes_partial(tmp_path):
         raise AssertionError("Oversized upload was accepted")
 
     assert not destination.exists()
+
+
+def test_upload_validation_rejects_pdf_with_invalid_signature(tmp_path):
+    path = tmp_path / "paper.pdf"
+    path.write_bytes(b"not-a-real-pdf")
+
+    try:
+        validate_uploaded_file(
+            path,
+            path.name,
+            "application/pdf",
+            allowed_extensions=PDF_EXTENSIONS,
+        )
+    except HTTPException as exc:
+        assert exc.status_code == 415
+        assert "文件签名" in str(exc.detail)
+    else:
+        raise AssertionError("Invalid PDF signature was accepted")
+
+
+def test_upload_validation_rejects_header_mime_mismatch(tmp_path):
+    path = tmp_path / "headers.csv"
+    path.write_text("SampleID,SiO2\n", encoding="utf-8")
+
+    try:
+        validate_uploaded_file(
+            path,
+            path.name,
+            "image/png",
+            allowed_extensions=HEADER_EXTENSIONS,
+        )
+    except HTTPException as exc:
+        assert exc.status_code == 415
+        assert "MIME" in str(exc.detail)
+    else:
+        raise AssertionError("MIME mismatch was accepted")
 
 
 def test_api_documentation_can_be_disabled_without_static_fallback(tmp_path):
@@ -72,7 +113,7 @@ def test_article_upload_is_rejected_when_local_user_quota_is_exceeded(tmp_path):
     with TestClient(app) as client:
         response = client.post(
             "/api/v1/import/file?project_id=DEFAULT_WORKSPACE",
-            files={"file": ("paper.pdf", b"not-a-real-pdf", "application/pdf")},
+            files={"file": ("paper.pdf", b"%PDF-1.4\n%%EOF\n", "application/pdf")},
         )
 
     assert response.status_code == 413

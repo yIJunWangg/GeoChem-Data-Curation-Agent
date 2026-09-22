@@ -1,4 +1,4 @@
-import type { AgentRun, Article, BatchPayload, ChatCitation, ChatThread, ChatThreadState, DocumentElement, HeaderConfig, HeaderField, ParagraphCue, Resource, TableRulePreflight, TraceRecordDetail, TraceRecordSummary, WorkflowEvent, Workspace } from './types'
+import type { AgentActivityEvent, AgentRun, Article, BatchPayload, ChatCitation, ChatThread, ChatThreadState, DocumentElement, HeaderConfig, HeaderField, ParagraphCue, Resource, TableRulePreflight, TraceRecordDetail, TraceRecordSummary, WorkflowEvent, Workspace } from './types'
 
 export type AdminRuntimeStatus = {
   profile: string
@@ -71,6 +71,102 @@ export type AdminUsersResponse = {
   first: number
   limit: number
   preview?: boolean
+}
+
+export type WorkspaceMember = {
+  membership_id: string
+  user_id: string
+  role: 'owner' | 'curator' | 'reviewer' | 'viewer'
+  status: 'active' | 'disabled'
+  invited_by: string
+  username: string
+  display_name: string
+  email: string
+  created_at: string
+  updated_at: string
+}
+
+export type PublishedRule = {
+  rule_id: string
+  project_id: string
+  organization_id?: string
+  article_id?: string
+  pattern: string
+  target_field: string
+  target_header: string
+  target_unit?: string
+  rule_type: string
+  source_type?: string
+  evidence?: string
+  conditions: Record<string, unknown>
+  confidence: number
+  review_status: string
+  scope: 'article' | 'project' | 'organization'
+  enabled: boolean
+  revision: number
+  supersedes_rule_id?: string
+  created_by?: string
+  submitter_name?: string
+  published_by?: string
+  published_at?: string
+  created_at?: string
+  usage_count: number
+  related_article_count: number
+}
+
+export type RuleSubmission = {
+  submission_id: string
+  import_id?: string
+  project_id: string
+  organization_id: string
+  article_id?: string
+  source_term: string
+  target_canonical_field: string
+  target_header?: string
+  source_unit?: string
+  target_unit?: string
+  chemical_form?: string
+  context_text?: string
+  conversion_formula?: string
+  evidence?: string
+  notes?: string
+  knowledge_concept_id?: string
+  knowledge_release_id?: string
+  scope: 'article' | 'project' | 'organization'
+  confidence: number
+  status: 'draft' | 'pending' | 'approved' | 'rejected'
+  conflict_status: string
+  validation: {
+    valid?: boolean
+    errors?: string[]
+    warnings?: string[]
+    duplicates?: string[]
+    conflicts?: Array<{rule_id:string;target:string}>
+    knowledge_score?: number
+    auto_apply_allowed?: boolean
+    unit_compatibility?: string
+    chemical_form?: string
+  }
+  supersedes_rule_id?: string
+  created_by: string
+  submitter_name?: string
+  created_at: string
+  updated_at: string
+  submitted_at?: string
+  reviewed_at?: string
+  reviews?: Array<Record<string, unknown>>
+}
+
+export type RuleImportPreview = {
+  import_id: string
+  filename: string
+  status: string
+  total_rows: number
+  valid_rows: number
+  invalid_rows: number
+  preview: Array<Record<string, unknown>>
+  errors: Array<Record<string, unknown>>
+  submission_ids?: string[]
 }
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' }
@@ -181,6 +277,15 @@ export const api = {
     if (userId) params.set('user_id', userId)
     return request<{events:Record<string, unknown>[]}>(`/api/v1/admin/audit-events?${params.toString()}`)
   },
+  workspaces: () => request<{workspaces:Workspace[]}>('/api/v1/workspaces'),
+  adminWorkspaceMembers: (projectId: string) =>
+    request<{members:WorkspaceMember[]}>(`/api/v1/admin/workspaces/${encodeURIComponent(projectId)}/members`),
+  addAdminWorkspaceMember: (projectId: string, userId: string, role: WorkspaceMember['role'], status: WorkspaceMember['status'] = 'active') =>
+    request<WorkspaceMember>(`/api/v1/admin/workspaces/${encodeURIComponent(projectId)}/members`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ user_id: userId, role, status }) }),
+  updateAdminWorkspaceMember: (projectId: string, userId: string, payload: Partial<Pick<WorkspaceMember, 'role' | 'status'>>) =>
+    request<WorkspaceMember>(`/api/v1/admin/workspaces/${encodeURIComponent(projectId)}/members/${encodeURIComponent(userId)}`, { method: 'PATCH', headers: JSON_HEADERS, body: JSON.stringify(payload) }),
+  deleteAdminWorkspaceMember: (projectId: string, userId: string) =>
+    request<{status:string;project_id:string;user_id:string}>(`/api/v1/admin/workspaces/${encodeURIComponent(projectId)}/members/${encodeURIComponent(userId)}`, { method: 'DELETE' }),
   chatThreads: (projectId: string, articleId = '') => {
     const params = new URLSearchParams({ project_id: projectId })
     if (articleId) params.set('article_id', articleId)
@@ -244,6 +349,16 @@ export const api = {
     request<Record<string, unknown>>(`/api/v1/articles/${articleId}/pre-extraction-rules?project_id=${encodeURIComponent(projectId)}`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(payload) }),
   tableRulePreflight: (projectId: string, articleId: string) =>
     request<TableRulePreflight>(`/api/v1/articles/${articleId}/table-rule-preflight?project_id=${encodeURIComponent(projectId)}`),
+  mappingKnowledgeSearch: (projectId: string, query: string, limit = 20) =>
+    request<Record<string, unknown>>(`/api/v1/mapping-knowledge/search?project_id=${encodeURIComponent(projectId)}&q=${encodeURIComponent(query)}&limit=${limit}`),
+  currentMappingKnowledgeRelease: (projectId: string) =>
+    request<Record<string, unknown>>(`/api/v1/mapping-knowledge/releases/current?project_id=${encodeURIComponent(projectId)}`),
+  syncMappingKnowledge: (projectId: string) =>
+    request<Record<string, unknown>>(`/api/v1/admin/mapping-knowledge/sync?project_id=${encodeURIComponent(projectId)}`, { method: 'POST' }),
+  mappingKnowledgeImportDiff: (projectId: string, importId: string) =>
+    request<Record<string, unknown>>(`/api/v1/admin/mapping-knowledge/imports/${importId}/diff?project_id=${encodeURIComponent(projectId)}`),
+  publishMappingKnowledgeImport: (projectId: string, importId: string) =>
+    request<Record<string, unknown>>(`/api/v1/admin/mapping-knowledge/imports/${importId}/publish?project_id=${encodeURIComponent(projectId)}`, { method: 'POST' }),
   assistTableRulePreflight: (projectId: string, articleId: string, sourceHeaders: string[] = []) =>
     request<TableRulePreflight>(`/api/v1/articles/${articleId}/table-rule-preflight/assist`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ project_id: projectId, source_headers: sourceHeaders }) }),
   modelCapabilities: () => request<Record<string, unknown>>('/api/v1/model-capabilities'),
@@ -300,7 +415,44 @@ export const api = {
   deleteRecord: (projectId: string, recordId: string) => request(`/api/v1/candidate-records/${recordId}?project_id=${encodeURIComponent(projectId)}`, { method: 'DELETE' }),
   assignHeader: (projectId: string, articleId: string, configId: string) => request(`/api/v1/articles/${articleId}/header-config`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ project_id: projectId, config_id: configId }) }),
   reviews: (projectId: string) => request<Record<string, unknown>[]>(`/api/v1/reviews?project_id=${encodeURIComponent(projectId)}`),
-  rules: (projectId: string) => request<{mapping: Record<string, unknown>[]; extraction: Record<string, unknown>[]}>(`/api/v1/rules?project_id=${encodeURIComponent(projectId)}`),
+  rules: (projectId: string, filters: Record<string, string | number> = {}) => {
+    const params = new URLSearchParams({ project_id: projectId })
+    Object.entries(filters).forEach(([key, value]) => { if (String(value)) params.set(key, String(value)) })
+    return request<{items: PublishedRule[]; count: number; organization_id: string}>(`/api/v1/rules?${params.toString()}`)
+  },
+  ruleDetail: (projectId: string, ruleId: string) =>
+    request<PublishedRule & {history?: PublishedRule[]}>(`/api/v1/rules/${encodeURIComponent(ruleId)}?project_id=${encodeURIComponent(projectId)}`),
+  ruleHistory: (projectId: string, ruleId: string) =>
+    request<{items: PublishedRule[]}>(`/api/v1/rules/${encodeURIComponent(ruleId)}/history?project_id=${encodeURIComponent(projectId)}`),
+  ruleSubmissions: (projectId: string, filters: {status?:string;mine?:boolean;q?:string} = {}) => {
+    const params = new URLSearchParams({ project_id: projectId })
+    if (filters.status) params.set('status', filters.status)
+    if (filters.mine) params.set('mine', 'true')
+    if (filters.q) params.set('q', filters.q)
+    return request<{items: RuleSubmission[]; count: number}>(`/api/v1/rule-submissions?${params.toString()}`)
+  },
+  createRuleSubmission: (projectId: string, payload: Record<string, unknown>) =>
+    request<RuleSubmission>(`/api/v1/rule-submissions?project_id=${encodeURIComponent(projectId)}`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(payload) }),
+  updateRuleSubmission: (projectId: string, submissionId: string, payload: Record<string, unknown>) =>
+    request<RuleSubmission>(`/api/v1/rule-submissions/${encodeURIComponent(submissionId)}?project_id=${encodeURIComponent(projectId)}`, { method: 'PATCH', headers: JSON_HEADERS, body: JSON.stringify(payload) }),
+  submitRuleSubmission: (projectId: string, submissionId: string) =>
+    request<RuleSubmission>(`/api/v1/rule-submissions/${encodeURIComponent(submissionId)}/submit?project_id=${encodeURIComponent(projectId)}`, { method: 'POST' }),
+  importRules: (projectId: string, file: File) => {
+    const data = new FormData(); data.append('file', file)
+    return request<RuleImportPreview>(`/api/v1/rule-imports?project_id=${encodeURIComponent(projectId)}`, { method: 'POST', body: data })
+  },
+  ruleImportPreview: (projectId: string, importId: string) =>
+    request<RuleImportPreview>(`/api/v1/rule-imports/${encodeURIComponent(importId)}/preview?project_id=${encodeURIComponent(projectId)}`),
+  adminRuleSubmissions: (projectId: string, filters: {status?:string;q?:string} = {}) => {
+    const params = new URLSearchParams({ project_id: projectId })
+    if (filters.status) params.set('status', filters.status)
+    if (filters.q) params.set('q', filters.q)
+    return request<{items: RuleSubmission[]; count: number}>(`/api/v1/admin/rule-submissions?${params.toString()}`)
+  },
+  approveRuleSubmission: (projectId: string, submissionId: string, comment = '') =>
+    request<{submission:RuleSubmission;rule:PublishedRule}>(`/api/v1/admin/rule-submissions/${encodeURIComponent(submissionId)}/approve?project_id=${encodeURIComponent(projectId)}`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ comment }) }),
+  rejectRuleSubmission: (projectId: string, submissionId: string, comment: string) =>
+    request<RuleSubmission>(`/api/v1/admin/rule-submissions/${encodeURIComponent(submissionId)}/reject?project_id=${encodeURIComponent(projectId)}`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ comment }) }),
   ruleMemory: (projectId: string, articleId = '') => {
     const params = new URLSearchParams({ project_id: projectId })
     if (articleId) params.set('article_id', articleId)
@@ -344,8 +496,23 @@ export const api = {
     const data = new FormData(); data.append('file', file)
     return request<{article_id:string;resource_id:string;file_name:string;status:string;message?:string;selection?:Record<string,unknown>}>(`/api/v1/chat/threads/${threadId}/upload?project_id=${encodeURIComponent(projectId)}`, { method: 'POST', body: data })
   },
-  handoffAgentRun: (projectId: string, runId: string) =>
-    request<{run_id:string;status:string;article_id?:string;workbench_path:string}>(`/api/v1/agent-runs/${runId}/handoff`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ project_id: projectId }) }),
+  handoffAgentRun: (
+    projectId: string,
+    runId: string,
+    presentation: 'inline' | 'full' = 'full',
+    workbenchView?: 'resources' | 'extract' | 'quality',
+    workbenchStage?: string,
+  ) =>
+    request<{run_id:string;status:string;article_id?:string;workbench_path:string;handoff_context?:Record<string,unknown>}>(`/api/v1/agent-runs/${runId}/handoff`, {
+      method: 'POST',
+      headers: JSON_HEADERS,
+      body: JSON.stringify({
+        project_id: projectId,
+        presentation,
+        workbench_view: workbenchView,
+        workbench_stage: workbenchStage,
+      }),
+    }),
   resumeAgentFromWorkbench: (projectId: string, runId: string) =>
     request<{run_id:string;status:string;return_path?:string;pending_interrupt?:Record<string,unknown>}>(`/api/v1/agent-runs/${runId}/return-from-workbench`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ project_id: projectId }) }),
   workbenchDiff: (projectId: string, runId: string) =>
@@ -423,13 +590,13 @@ export function watchTask(projectId: string, taskId: string, onEvent: (event: Wo
 export function watchAgentRun(
   projectId: string,
   runId: string,
-  onEvent: (event: { event_id: number; level: string; message: string; done?: boolean }) => void,
+  onEvent: (event: AgentActivityEvent) => void,
   onDone: () => void,
 ): () => void {
   return watchSse(
     `/api/v1/agent-runs/${runId}/events?project_id=${encodeURIComponent(projectId)}`,
     (payload) => {
-      const event = payload as { event_id: number; level: string; message: string; done?: boolean }
+      const event = payload as AgentActivityEvent
       onEvent(event)
       return Boolean(event.done)
     },

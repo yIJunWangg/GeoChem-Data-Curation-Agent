@@ -24,6 +24,7 @@ export type PdfEvidence = EvidenceSource & {
 type Props = {
   projectId: string
   resources: Resource[]
+  articleScopeKey?: string
   evidence?: PdfEvidence | null
   details?: ReactNode
   onRequestFocus?: () => void
@@ -31,7 +32,7 @@ type Props = {
 
 const clamp = (value: number, minimum: number, maximum: number) => Math.max(minimum, Math.min(maximum, value))
 
-export function PdfEvidenceViewer({ projectId, resources, evidence, details, onRequestFocus }: Props) {
+export function PdfEvidenceViewer({ projectId, resources, articleScopeKey = '', evidence, details, onRequestFocus }: Props) {
   const pdfResources = useMemo(() => resources.filter((resource) => resource.resource_type.includes('pdf')), [resources])
   const [resourceId, setResourceId] = useState('')
   const [pageNumber, setPageNumber] = useState(1)
@@ -44,12 +45,35 @@ export function PdfEvidenceViewer({ projectId, resources, evidence, details, onR
   const containerRef = useRef<HTMLDivElement>(null)
   const evidenceRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    if (!resourceId && pdfResources.length) setResourceId(pdfResources[0].resource_id)
-  }, [pdfResources, resourceId])
+  const pdfResourceIds = useMemo(() => new Set(pdfResources.map((resource) => resource.resource_id)), [pdfResources])
 
   useEffect(() => {
-    if (evidence?.resource_id) setResourceId(evidence.resource_id)
+    const evidenceResourceId = evidence?.resource_id && pdfResourceIds.has(evidence.resource_id)
+      ? evidence.resource_id
+      : ''
+    const firstSpan = evidenceResourceId ? evidence?.page_spans?.[0] : undefined
+    setResourceId(evidenceResourceId || pdfResources[0]?.resource_id || '')
+    setPageNumber(firstSpan?.page_number || (evidenceResourceId ? evidence?.page_number : undefined) || 1)
+    setPageCount(0)
+    setZoom(1)
+    setFitWidth(true)
+    setActiveSpanIndex(0)
+  }, [articleScopeKey])
+
+  useEffect(() => {
+    if (!pdfResources.length) {
+      if (resourceId) setResourceId('')
+      return
+    }
+    if (!resourceId || !pdfResourceIds.has(resourceId)) {
+      setResourceId(pdfResources[0].resource_id)
+      setPageNumber(1)
+      setPageCount(0)
+    }
+  }, [pdfResourceIds, pdfResources, resourceId])
+
+  useEffect(() => {
+    if (evidence?.resource_id && pdfResourceIds.has(evidence.resource_id)) setResourceId(evidence.resource_id)
     const firstSpan = evidence?.page_spans?.[0]
     if (firstSpan?.page_number) {
       setActiveSpanIndex(0)
@@ -58,7 +82,7 @@ export function PdfEvidenceViewer({ projectId, resources, evidence, details, onR
       setActiveSpanIndex(0)
       setPageNumber(evidence.page_number)
     }
-  }, [evidence?.resource_id, evidence?.page_number, evidence?.page_spans])
+  }, [evidence?.resource_id, evidence?.page_number, evidence?.page_spans, pdfResourceIds])
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -78,7 +102,7 @@ export function PdfEvidenceViewer({ projectId, resources, evidence, details, onR
     setZoom((current) => clamp(Math.round((current + delta) * 10) / 10, 0.5, 2.5))
   }
   const renderedWidth = fitWidth ? Math.max(320, containerWidth - 28) : Math.round(720 * zoom)
-  const pdfFile = useMemo(() => resourceId ? authenticatedFile(api.pdfUrl(projectId, resourceId)) : undefined, [projectId, resourceId])
+  const pdfFile = useMemo(() => resourceId && pdfResourceIds.has(resourceId) ? authenticatedFile(api.pdfUrl(projectId, resourceId)) : undefined, [pdfResourceIds, projectId, resourceId])
   const spans = evidence?.page_spans?.length ? evidence.page_spans : (evidence?.bbox?.length === 4 && evidence?.page_number ? [{ page_number: evidence.page_number, bbox: evidence.bbox, role: 'evidence' }] : [])
   const activeSpan = spans[Math.min(activeSpanIndex, Math.max(0, spans.length - 1))]
   const bbox = activeSpan?.bbox || []
@@ -102,7 +126,7 @@ export function PdfEvidenceViewer({ projectId, resources, evidence, details, onR
     </div>
     <div className="pdf-evidence-scroll" ref={containerRef}>
       {pdfFile ? <Document
-        key={resourceId}
+        key={`${articleScopeKey}:${resourceId}`}
         file={pdfFile}
         onLoadSuccess={({ numPages }) => { setPageCount(numPages); setPageNumber((current) => clamp(current, 1, numPages)) }}
         loading={<div className="empty-state compact">正在载入 PDF...</div>}

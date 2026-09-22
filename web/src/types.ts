@@ -1,4 +1,11 @@
-export type Workspace = { project_id: string; project_name: string }
+export type Workspace = {
+  project_id: string
+  project_name: string
+  description?: string
+  organization_id?: string
+  organization_name?: string
+  workspace_role?: 'owner' | 'curator' | 'reviewer' | 'viewer' | string
+}
 
 export type Article = {
   article_id: string
@@ -136,8 +143,17 @@ export type TableRuleSuggestion = {
   suggested_target_header: string
   confidence: number
   reason: string
-  mapping_source?: 'memory' | 'builtin' | 'exact' | 'leaf_exact' | 'similarity' | 'unresolved' | 'llm'
+  mapping_source?: 'memory' | 'organization_advisory' | 'builtin' | 'exact' | 'knowledge' | 'leaf_exact' | 'similarity' | 'unresolved' | 'llm'
   existing_rule_id?: string
+  knowledge_concept_id?: string
+  knowledge_concept_version_id?: string
+  knowledge_release_id?: string
+  chemical_form?: string
+  unit_compatibility?: string
+  source_references?: string[]
+  auto_applied?: boolean
+  requires_confirmation?: boolean
+  mapping_reason?: string
 }
 
 export type TableRulePreflight = {
@@ -271,6 +287,8 @@ export type ChatMessage = {
   model_name?: string
   created_at: string
   ui_payload?: Record<string, unknown>
+  action_state?: 'pending' | 'selected' | 'superseded' | 'expired' | ''
+  superseded_by_message_id?: string
 }
 
 export type ChatThread = {
@@ -285,6 +303,26 @@ export type ChatThread = {
   active_run_status?: 'pending' | 'running' | 'waiting_user' | 'waiting_workbench'
   messages?: ChatMessage[]
   selection_context?: Record<string, unknown>
+  latest_actionable_message_id?: string
+}
+
+export type AgentActivityEvent = {
+  event_id: number | string
+  tool_call_id?: string
+  event_type?: string
+  tool_name?: string
+  label?: string
+  status?: 'pending' | 'running' | 'completed' | 'failed' | 'rejected' | string
+  safe_input_summary?: string | Record<string, unknown>
+  safe_output_summary?: string | Record<string, unknown>
+  duration_ms?: number
+  checkpoint?: string
+  error?: string
+  level?: string
+  message?: string
+  created_at?: string
+  done?: boolean
+  details?: Record<string, unknown>
 }
 
 export type AgentRun = {
@@ -303,6 +341,7 @@ export type AgentRun = {
   handoff_context?: Record<string, unknown>
   workbench_diff?: Record<string, unknown>
   error_message?: string
+  activity_events?: AgentActivityEvent[]
 }
 
 export type ChatThreadState = {
@@ -312,4 +351,33 @@ export type ChatThreadState = {
   active_header_config?: { config_id: string; name: string; field_count: number } | null
   latest_run?: Record<string, unknown> | null
   actual_model: { provider: string; model: string }
+  latest_actionable_message_id?: string
+}
+
+export type WorkbenchDisplayMode = 'full' | 'embedded'
+export type WorkbenchView = 'resources' | 'extract' | 'quality'
+export type WorkbenchStage =
+  | 'table_standardize'
+  | 'mapping'
+  | 'tables'
+  | 'paragraphs'
+  | 'figures'
+  | 'edit'
+export type ContextPanelMode =
+  | 'pdf'
+  | 'resource'
+  | 'table_standardize'
+  | 'mapping'
+  | 'candidates'
+  | 'quality'
+  | 'trace'
+
+export type WorkbenchRuntimeState = {
+  project_id: string
+  article_id: string
+  active_batch_id?: string
+  header_config_id?: string
+  discovery_status?: string
+  view: WorkbenchView
+  stage?: WorkbenchStage
 }

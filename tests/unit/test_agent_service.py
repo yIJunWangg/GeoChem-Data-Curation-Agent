@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import time
 from types import SimpleNamespace
@@ -162,6 +163,8 @@ def test_workbench_handoff_returns_to_original_thread_with_diff(tmp_path):
 
     handoff = agent.handoff("AGENT_TEST", started["run_id"])
     assert handoff["status"] == "waiting_workbench"
+    assert handoff["handoff_context"]["workbench_view"] == "resources"
+    assert "view=resources" in handoff["workbench_path"]
     assert f"thread_id={thread['thread_id']}" in handoff["workbench_path"]
     assert f"run_id={started['run_id']}" in handoff["workbench_path"]
 
@@ -587,6 +590,46 @@ def test_new_thread_does_not_inherit_another_threads_article(tmp_path):
     assert agent.thread_state("AGENT_TEST", fresh["thread_id"])["active_article_id"] == ""
 
 
+def test_only_latest_actionable_selection_card_remains_active(tmp_path):
+    manager = _project(tmp_path)
+    agent = ArticleCurationAgent(manager)
+    thread = agent.create_thread("AGENT_TEST", scope="workspace")
+    db = manager.get_database("AGENT_TEST")
+    try:
+        first_id = agent._insert_chat_message(
+            db,
+            thread_id=thread["thread_id"],
+            role="assistant",
+            content="请选择文章。",
+            ui_payload={
+                "kind": "entity_cards",
+                "entity_type": "article",
+                "entities": [{"entity_id": "ART_1", "title": "First result"}],
+            },
+        )
+        second_id = agent._insert_chat_message(
+            db,
+            thread_id=thread["thread_id"],
+            role="assistant",
+            content="请选择新的文章。",
+            ui_payload={
+                "kind": "entity_cards",
+                "entity_type": "article",
+                "entities": [{"entity_id": "ART_2", "title": "Second result"}],
+            },
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    refreshed = agent.thread("AGENT_TEST", thread["thread_id"])
+    messages = {message["message_id"]: message for message in refreshed["messages"]}
+    assert messages[first_id]["action_state"] == "superseded"
+    assert messages[first_id]["superseded_by_message_id"] == second_id
+    assert messages[second_id]["action_state"] == "pending"
+    assert refreshed["latest_actionable_message_id"] == second_id
+
+
 def test_langchain_agent_uses_audited_native_tool_calling(tmp_path, monkeypatch):
     manager = _project(tmp_path)
     agent = ArticleCurationAgent(manager)
@@ -646,6 +689,71 @@ def test_langchain_agent_uses_audited_native_tool_calling(tmp_path, monkeypatch)
     try:
         audit = db.fetch_one("SELECT tool_name, status FROM agent_tool_calls WHERE run_id=?", (run_id,))
         assert dict(audit) == {"tool_name": "list_project_entities", "status": "completed"}
+    finally:
+        db.close()
+
+
+def test_header_import_request_exposes_real_upload_action_even_when_model_lists_headers(tmp_path, monkeypatch):
+    manager = _project(tmp_path)
+    agent = ArticleCurationAgent(manager)
+    thread = agent.create_thread("AGENT_TEST", scope="workspace")
+    run_id = "RUN_HEADER_IMPORT_TEST"
+    db = manager.get_database("AGENT_TEST")
+    try:
+        db.execute(
+            """INSERT INTO agent_runs
+               (run_id, project_id, thread_id, status, run_kind, created_at, updated_at)
+               VALUES (?, 'AGENT_TEST', ?, 'running', 'conversation', ?, ?)""",
+            (run_id, thread["thread_id"], "2026-01-01T00:00:00", "2026-01-01T00:00:00"),
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    class FakeClient(agent_service_module.LLMClient):
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def chat(self, messages, **_kwargs):
+            if any(message.get("role") == "tool" for message in messages):
+                return SimpleNamespace(
+                    final_content="当前项目有一个表头，但不能单独导入。",
+                    tool_calls=[], provider="test-provider", model="test-model",
+                    finish_reason="stop", reasoning_present=False,
+                    input_tokens=10, output_tokens=8, total_tokens=18,
+                )
+            return SimpleNamespace(
+                final_content="",
+                tool_calls=[{
+                    "id": "call_headers",
+                    "name": "list_project_entities",
+                    "args": {"entity_type": "header_config", "query": ""},
+                }],
+                provider="test-provider", model="test-model",
+                finish_reason="tool_calls", reasoning_present=False,
+                input_tokens=10, output_tokens=4, total_tokens=14,
+            )
+
+    monkeypatch.setattr(agent_service_module, "LLMClient", FakeClient)
+    result = agent.chat_agent.run(
+        project_id="AGENT_TEST",
+        thread_id=thread["thread_id"],
+        run_id=run_id,
+        article_id="",
+        user_message="我可以导入新的表头吗？",
+        selection_context={},
+    )
+
+    assert result["actual_model"] == {"provider": "test-provider", "model": "test-model"}
+    assert result["answer"]["ui_payload"]["kind"] == "header_import_action"
+    assert "CSV" in result["answer"]["answer"]
+    db = manager.get_database("AGENT_TEST")
+    try:
+        tools = {
+            row["tool_name"]
+            for row in db.fetch_all("SELECT tool_name FROM agent_tool_calls WHERE run_id=?", (run_id,))
+        }
+        assert tools == {"list_project_entities", "request_header_config_import"}
     finally:
         db.close()
 
@@ -782,6 +890,31 @@ def test_explicit_processing_command_bypasses_chat_tool_routing(tmp_path, monkey
 
     assert run["status"] == "waiting_user", run["error_message"]
     assert run["pending_interrupt"]["kind"] == "resource_confirmation"
+    db = manager.get_database("AGENT_TEST")
+    try:
+        tool_rows = db.fetch_all(
+            """SELECT tool_call_id, tool_name, status
+               FROM agent_tool_calls WHERE run_id=? ORDER BY started_at""",
+            (started["run_id"],),
+        )
+        assert [(row["tool_name"], row["status"]) for row in tool_rows] == [
+            ("discover_article_resources", "completed"),
+            ("sync_article_retrieval", "completed"),
+        ]
+        events = db.fetch_all(
+            "SELECT details_json FROM agent_run_events WHERE run_id=? ORDER BY event_id",
+            (started["run_id"],),
+        )
+        by_call: dict[str, list[str]] = {}
+        for row in events:
+            details = json.loads(row["details_json"] or "{}")
+            if details.get("event_type") != "tool":
+                continue
+            by_call.setdefault(details["tool_call_id"], []).append(details["status"])
+        assert set(by_call) == {row["tool_call_id"] for row in tool_rows}
+        assert all(statuses == ["running", "completed"] for statuses in by_call.values())
+    finally:
+        db.close()
 
 
 def test_clicked_header_selection_binds_article_and_prompts_continue(tmp_path):
@@ -826,6 +959,18 @@ def test_clicked_header_selection_binds_article_and_prompts_continue(tmp_path):
 def test_explicit_empty_resource_selection_does_not_restore_recommendations(tmp_path, monkeypatch):
     manager = _project(tmp_path)
     agent = ArticleCurationAgent(manager)
+    thread = agent.create_thread("AGENT_TEST", "ART_1")
+    db = manager.get_database("AGENT_TEST")
+    try:
+        db.execute(
+            """INSERT INTO agent_runs
+               (run_id, project_id, article_id, thread_id, status, run_kind, created_at, updated_at)
+               VALUES ('RUN_TEST', 'AGENT_TEST', 'ART_1', ?, 'running', 'article_curation', ?, ?)""",
+            (thread["thread_id"], "2026-01-01T00:00:00", "2026-01-01T00:00:00"),
+        )
+        db.commit()
+    finally:
+        db.close()
     monkeypatch.setattr(agent, "_event", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(agent, "_set_workflow_step", lambda *_args, **_kwargs: None)
 
@@ -833,6 +978,7 @@ def test_explicit_empty_resource_selection_does_not_restore_recommendations(tmp_
         "project_id": "AGENT_TEST",
         "article_id": "ART_1",
         "run_id": "RUN_TEST",
+        "thread_id": thread["thread_id"],
         "confirmations": {
             "resources": {"action": "custom_selection", "element_ids": []},
         },

@@ -4,6 +4,8 @@ import { DashboardPage, HeaderPage, SettingsPage, StandardizedPage } from './Pag
 import { ReviewPage } from './ReviewPage'
 import { ChatPage } from './ChatPage'
 import AdminUsersPage from './AdminUsersPage'
+import AdminWorkspaceMembersPage from './AdminWorkspaceMembersPage'
+import RuleCenterPage from './RuleCenterPage'
 import { AuthGate, LoginPage, PortalPage } from './AuthPages'
 import { AdminShell, WorkspaceShell } from './Shells'
 import {
@@ -31,13 +33,14 @@ export default function App() {
     <Route element={<AuthGate/>}>
       <Route path="/portal" element={<PortalPage/>}/>
       <Route element={<WorkspaceShell/>}>
-        <Route index element={<DashboardPage/>}/>
+        <Route index element={<ChatPage/>}/>
+        <Route path="/overview" element={<DashboardPage/>}/>
         <Route path="/headers" element={<HeaderPage/>}/>
-        <Route path="/import" element={<LegacyRedirect pathname="/" defaults={{ panel: 'import' }}/>}/>
+        <Route path="/import" element={<LegacyRedirect pathname="/overview" defaults={{ panel: 'import' }}/>}/>
         <Route path="/workbench" element={<WorkbenchPage/>}/>
-        <Route path="/chat" element={<ChatPage/>}/>
+        <Route path="/chat" element={<LegacyRedirect pathname="/"/>}/>
         <Route path="/review" element={<ReviewPage/>}/>
-        <Route path="/rules" element={<LegacyRedirect pathname="/workbench" defaults={{ view: 'rules' }}/>}/>
+        <Route path="/rules" element={<RuleCenterPage/>}/>
         <Route path="/standardized" element={<StandardizedPage/>}/>
         <Route path="/trace" element={<LegacyRedirect pathname="/review" defaults={{ mode: 'standardized' }}/>}/>
         <Route path="/cost" element={<LegacyRedirect pathname="/settings" defaults={{ tab: 'usage' }}/>}/>
@@ -49,7 +52,9 @@ export default function App() {
       <Route path="/admin" element={<AdminShell/>}>
         <Route index element={<AdminOverviewPage/>}/>
         <Route path="users" element={<AdminUsersPage/>}/>
+        <Route path="workspaces" element={<AdminWorkspaceMembersPage/>}/>
         <Route path="roles" element={<AdminRolesPage/>}/>
+        <Route path="rules" element={<RuleCenterPage adminMode/>}/>
         <Route path="models" element={<AdminModelsPage/>}/>
         <Route path="storage" element={<AdminStoragePage/>}/>
         <Route path="tasks" element={<AdminTasksPage/>}/>

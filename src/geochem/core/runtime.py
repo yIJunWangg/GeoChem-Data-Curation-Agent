@@ -60,6 +60,10 @@ class RuntimeSettings(BaseModel):
     storage_root: Path = Field(default_factory=lambda: Path("geochem-data"))
     export_root: Path | None = None
     max_upload_mb: int = Field(default=512, ge=1)
+    request_rate_per_minute: int = Field(default=300, ge=10)
+    chat_rate_per_minute: int = Field(default=40, ge=1)
+    upload_rate_per_hour: int = Field(default=20, ge=1)
+    max_concurrent_tasks_per_user: int = Field(default=3, ge=1, le=50)
 
     @model_validator(mode="after")
     def validate_server_profile(self) -> "RuntimeSettings":
@@ -197,4 +201,8 @@ def load_runtime_settings(environ: Mapping[str, str] | None = None) -> RuntimeSe
         storage_root=storage_root,
         export_root=Path(export_value).expanduser() if export_value else None,
         max_upload_mb=int(env.get("GEOCHEM_MAX_UPLOAD_MB", "512")),
+        request_rate_per_minute=int(env.get("GEOCHEM_REQUEST_RATE_PER_MINUTE", "300")),
+        chat_rate_per_minute=int(env.get("GEOCHEM_CHAT_RATE_PER_MINUTE", "40")),
+        upload_rate_per_hour=int(env.get("GEOCHEM_UPLOAD_RATE_PER_HOUR", "20")),
+        max_concurrent_tasks_per_user=int(env.get("GEOCHEM_MAX_CONCURRENT_TASKS_PER_USER", "3")),
     )

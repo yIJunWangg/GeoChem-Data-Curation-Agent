@@ -6,13 +6,16 @@ import type { CellClickedEvent, CellValueChangedEvent, ColDef } from 'ag-grid-co
 import { Document, Page, pdfjs } from 'react-pdf'
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import {
-  ArrowRight, BoxSelect, Check, ChevronLeft, ChevronRight, Eye, FileText,
-  Image, LoaderCircle, Play, Search, Sparkles, Table2, Trash2,
+  ArrowRight, BoxSelect, Check, ChevronLeft, ChevronRight, FileText,
+  Image, LoaderCircle, Maximize2, Minus, PanelLeftClose, PanelLeftOpen,
+  PanelRightClose, PanelRightOpen, Play, Plus, Search, Sparkles, Table2,
+  Trash2,
 } from 'lucide-react'
 import { api, authenticatedFile, watchTask } from './api'
 import { AuthenticatedImage } from './AuthenticatedImage'
-import { buildGridRows, WORKBENCH_STEPS } from './candidateGrid'
+import { buildGridRows, resolveWorkbenchStep, WORKBENCH_STEPS } from './candidateGrid'
 import { useAppStore } from './store'
+import { PageCommandBar } from './WorkspaceUI'
 import type { BatchPayload, CandidateCell, CandidateRecord, DocumentElement, HeaderField, ParagraphCue, TableRuleSuggestion, WorkflowEvent } from './types'
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker
@@ -58,6 +61,13 @@ const EXTRACTION_STAGE_LABELS: Record<ExtractionStage, string> = {
   paragraphs: '抽取段落资源',
   figures: '抽取图像资源',
   edit: '候选结果修改',
+}
+
+function extractionStageFromQuery(stage: string): ExtractionStage | null {
+  if (stage === 'standardize') return 'table_standardize'
+  return ['table_standardize', 'mapping', 'tables', 'paragraphs', 'figures', 'edit'].includes(stage)
+    ? stage as ExtractionStage
+    : null
 }
 
 function ElementIcon({ type }: { type: DocumentElement['element_type'] }) {
@@ -179,17 +189,6 @@ function StandardTablePreview({
   </div>
 }
 
-function ResourcePreview({ element }: { element: DocumentElement }) {
-  const [imageFailed, setImageFailed] = useState(false)
-  if (element.element_type === 'table') {
-    return <TableResourcePreview table={element.raw_table} fallbackText={element.text_content || element.caption || '表格资源'} />
-  }
-  if (element.element_type === 'figure' && element.preview_path && !imageFailed) {
-    return <AuthenticatedImage src={api.previewUrl(useAppStore.getState().projectId, element.element_id)} alt="资源预览" onLoadError={() => setImageFailed(true)} />
-  }
-  return <p>{element.text_content || element.caption}</p>
-}
-
 function DetailPreview({ element, projectId }: { element: DocumentElement; projectId: string }) {
   const [imageFailed, setImageFailed] = useState(false)
   if (element.element_type === 'table') {
@@ -213,52 +212,63 @@ function confidenceLabel(score: number) {
   return '低'
 }
 
-function ElementCard({ element, active, selected, onOpen, onToggle }: {
-  element: DocumentElement; active?: boolean; selected: boolean
-  onOpen: () => void; onToggle: () => void
-}) {
-  return (
-    <article className={`element-card ${active ? 'active' : ''}`} onClick={onOpen}>
-      <button className={`check-button ${selected ? 'checked' : ''}`} onClick={(event) => { event.stopPropagation(); onToggle() }} aria-label={selected ? '移出抽取队列' : '加入抽取队列'}>
-        {selected && <Check size={14} />}
-      </button>
-      <div className="element-card-body">
-        <div className="element-meta"><ElementIcon type={element.element_type} /><strong>{element.element_type === 'table' ? '表格' : element.element_type === 'figure' ? '图像' : '相关段落'}</strong><span>{elementPageLabel(element)}</span>{element.merge_reason && <em>已合并</em>}<b className={`confidence-pill ${confidenceBand(element.relevance_score)}`}>{confidenceLabel(element.relevance_score)} {Math.round(element.relevance_score * 100)}%</b></div>
-        <ResourcePreview element={element} />
-        {!!element.score_reasons?.length && <div className="score-reasons">{element.score_reasons.slice(0, 3).map((reason) => <span key={reason}>{reason}</span>)}</div>}
-        <div className="matched-fields">{element.matched_headers.slice(0, 7).map((field) => <span key={field}>{field}</span>)}</div>
-      </div>
-    </article>
-  )
-}
-
 function TaskConsole({ logs, busy }: { logs: WorkflowEvent[]; busy: boolean }) {
+  const [expanded, setExpanded] = useState(false)
   const last = logs.at(-1)
+  useEffect(() => setExpanded(busy), [busy])
+  if (!busy && !logs.length) return null
   return (
-    <section className="task-console">
-      <div className="task-console-head"><strong>{busy ? <><LoaderCircle className="spin" size={15} /> 智能体处理中</> : '工作台控制台'}</strong><span>{Math.round((last?.progress || 0) * 100)}%</span></div>
-      <div className="progress-track"><i style={{ width: `${(last?.progress || 0) * 100}%` }} /></div>
-      <div className="console-lines">{logs.length ? logs.slice(-5).map((log) => <div key={log.event_id}><span>{log.level}</span> {log.message}</div>) : '等待任务...'}</div>
+    <section className={`task-console ${expanded ? 'expanded' : 'collapsed'}`}>
+      <button className="task-console-head" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}>
+        <strong>{busy ? <><LoaderCircle className="spin" size={15} /> 智能体处理中</> : '工作台控制台'}</strong>
+        <span>{Math.round((last?.progress || 0) * 100)}% · {expanded ? '收起' : '展开'}</span>
+      </button>
+      {expanded && <>
+        <div className="progress-track"><i style={{ width: `${(last?.progress || 0) * 100}%` }} /></div>
+        <div className="console-lines">{logs.length ? logs.slice(-5).map((log) => <div key={log.event_id}><span>{log.level}</span> {log.message}</div>) : '等待任务...'}</div>
+      </>}
     </section>
   )
 }
 
-function PdfWorkbench({ projectId, articleId, elements, resources, active, onActive, refresh, onToggle }: {
-  projectId: string; articleId: string; elements: DocumentElement[]; resources: {resource_id:string;file_name:string;resource_type:string}[]
-  active?: DocumentElement; onActive: (element: DocumentElement) => void; refresh: () => void; onToggle: (element: DocumentElement) => void
+function PdfWorkbench({
+  projectId, articleId, elements, indexElements, resources, active, onActive, refresh, onToggle,
+  selectedCount, extractableCount, figureCount, confidenceThreshold, busy, onContinue,
+}: {
+  projectId: string
+  articleId: string
+  elements: DocumentElement[]
+  indexElements: DocumentElement[]
+  resources: {resource_id:string;file_name:string;resource_type:string}[]
+  active?: DocumentElement
+  onActive: (element?: DocumentElement) => void
+  refresh: () => void
+  onToggle: (element: DocumentElement) => void
+  selectedCount: number
+  extractableCount: number
+  figureCount: number
+  confidenceThreshold: number
+  busy: boolean
+  onContinue: () => void
 }) {
   const queryClient = useQueryClient()
   const pdfResources = resources.filter((resource) => resource.resource_type.includes('pdf'))
   const [resourceId, setResourceId] = useState('')
   const [pageNumber, setPageNumber] = useState(1)
   const [pageCount, setPageCount] = useState(0)
-  const [pageWidth, setPageWidth] = useState(820)
+  const [fitMode, setFitMode] = useState<'page' | 'width' | 'custom'>('page')
+  const [zoom, setZoom] = useState(1)
+  const [pageAspect, setPageAspect] = useState(0.773)
+  const [viewportSize, setViewportSize] = useState({ width: 860, height: 620 })
+  const [indexOpen, setIndexOpen] = useState(true)
+  const [inspectorOpen, setInspectorOpen] = useState(true)
+  const [indexMode, setIndexMode] = useState<'all' | 'selected'>('all')
   const [drawing, setDrawing] = useState<{startX:number;startY:number;x:number;y:number} | null>(null)
   const [manualType, setManualType] = useState('inspect')
   const [editingText, setEditingText] = useState('')
   const [editingCaption, setEditingCaption] = useState('')
   const [resizing, setResizing] = useState<{elementId:string;handle:string;startX:number;startY:number;origBbox:number[]} | null>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
+  const viewportRef = useRef<HTMLDivElement>(null)
   const indexRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => { if (!resourceId && pdfResources.length) setResourceId(pdfResources[0].resource_id) }, [pdfResources, resourceId])
@@ -278,9 +288,20 @@ function PdfWorkbench({ projectId, articleId, elements, resources, active, onAct
     node?.scrollIntoView({ block: 'center', behavior: 'smooth' })
   }, [active?.element_id])
   useEffect(() => {
-    const update = () => setPageWidth(Math.min(980, Math.max(520, (containerRef.current?.clientWidth || 860) - 42)))
-    update(); window.addEventListener('resize', update); return () => window.removeEventListener('resize', update)
+    if (!viewportRef.current) return
+    const observer = new ResizeObserver(([entry]) => setViewportSize({ width: entry.contentRect.width, height: entry.contentRect.height }))
+    observer.observe(viewportRef.current)
+    return () => observer.disconnect()
   }, [])
+  const availableWidth = Math.max(320, viewportSize.width - 30)
+  const availableHeight = Math.max(320, viewportSize.height - 30)
+  const fitPageWidth = Math.min(availableWidth, availableHeight * pageAspect)
+  const pageWidth = Math.round(fitMode === 'page' ? fitPageWidth : fitMode === 'width' ? availableWidth : 820 * zoom)
+  const changeZoom = (delta: number) => {
+    const current = fitMode === 'custom' ? zoom : pageWidth / 820
+    setZoom(Math.max(0.5, Math.min(2.5, Math.round((current + delta) * 10) / 10)))
+    setFitMode('custom')
+  }
   const pageElementSpans = elements
     .filter((element) => element.resource_id === resourceId)
     .flatMap((element) => {
@@ -365,7 +386,7 @@ function PdfWorkbench({ projectId, articleId, elements, resources, active, onAct
 	  const deleteActive = async () => {
     if (!active || active.parser_version !== 'manual') return
     await api.deleteElement(projectId, active.element_id)
-    onActive(undefined as unknown as DocumentElement); refresh()
+    onActive(undefined); refresh()
 	  }
 	  const teachActive = async (label: string) => {
 	    if (!active) return
@@ -381,28 +402,66 @@ function PdfWorkbench({ projectId, articleId, elements, resources, active, onAct
     e:{right:'-4px',top:'50%'}, se:{right:'-4px',bottom:'-4px'}, s:{left:'50%',bottom:'-4px'},
     sw:{left:'-4px',bottom:'-4px'}, w:{left:'-4px',top:'50%'},
   }
+  const listedElements = indexMode === 'selected'
+    ? indexElements.filter((element) => element.selected)
+    : indexElements
+  const listedSelectedCount = indexElements.filter((element) => element.selected).length
+  const resourceTitle = (element: DocumentElement) => (
+    element.caption || element.text_content || (element.element_type === 'table' ? '表格资源' : element.element_type === 'figure' ? '图像资源' : '段落资源')
+  ).replace(/\s+/g, ' ').trim()
 
   return (
-    <div className="pdf-workbench">
+    <div className={`pdf-workbench ${indexOpen ? '' : 'index-collapsed'} ${inspectorOpen ? '' : 'inspector-collapsed'}`}>
       <aside className="pdf-index panel">
-        <div className="panel-heading"><strong>自动定位资源</strong><span>{elements.length}</span></div>
-        <div className="resource-index-list" ref={indexRef}>{elements.map((element) => <button key={element.element_id} data-element-id={element.element_id} className={active?.element_id === element.element_id ? 'active' : ''} onClick={() => onActive(element)}><ElementIcon type={element.element_type} /><span>{elementPageLabel(element)}<br /><small>{element.caption || element.text_content.slice(0, 48)}</small></span></button>)}</div>
+        {indexOpen ? <>
+          <div className="panel-heading"><strong>资源索引</strong><div className="panel-heading-actions"><span>{indexElements.length}</span><button className="icon-button" title="收起资源索引" onClick={() => setIndexOpen(false)}><PanelLeftClose size={16} /></button></div></div>
+          <div className="resource-index-tabs" role="tablist" aria-label="资源范围">
+            <button className={indexMode === 'all' ? 'active' : ''} onClick={() => setIndexMode('all')}>全部 <span>{indexElements.length}</span></button>
+            <button className={indexMode === 'selected' ? 'active' : ''} onClick={() => setIndexMode('selected')}>已选 <span>{listedSelectedCount}</span></button>
+          </div>
+          <div className="resource-index-list" ref={indexRef}>
+            {listedElements.map((element) => <div
+              key={element.element_id}
+              role="button"
+              tabIndex={0}
+              data-element-id={element.element_id}
+              className={`resource-index-row ${active?.element_id === element.element_id ? 'active' : ''}`}
+              onClick={() => onActive(element)}
+              onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onActive(element) } }}
+              onDoubleClick={(event) => { event.preventDefault(); onToggle(element) }}
+            >
+              <button className={`check-button ${element.selected ? 'checked' : ''}`} title={element.selected ? '移出抽取队列' : '加入抽取队列'} aria-label={element.selected ? '移出抽取队列' : '加入抽取队列'} onClick={(event) => { event.stopPropagation(); onToggle(element) }}>{element.selected && <Check size={13} />}</button>
+              <ElementIcon type={element.element_type} />
+              <span className="resource-index-copy"><strong>{elementPageLabel(element)}</strong><small title={resourceTitle(element)}>{resourceTitle(element)}</small></span>
+              <b className={`resource-index-confidence ${confidenceBand(element.relevance_score)}`} title={`${confidenceLabel(element.relevance_score)}置信度`}>{Math.round(element.relevance_score * 100)}%</b>
+            </div>)}
+            {!listedElements.length && <div className="empty-state compact">{busy ? '正在发现资源...' : indexMode === 'selected' ? '当前筛选中还没有已选资源。' : '没有符合当前筛选的资源。'}</div>}
+          </div>
+        </> : <button className="resource-rail-expand" title="展开资源索引" onClick={() => setIndexOpen(true)}><PanelLeftOpen size={18} /><span>{indexElements.length}</span></button>}
       </aside>
-      <section className="pdf-center panel" ref={containerRef}>
+      <section className="pdf-center panel">
         <div className="pdf-toolbar">
           <select value={resourceId} onChange={(event) => { setResourceId(event.target.value); setPageNumber(1) }}>{pdfResources.map((resource) => <option key={resource.resource_id} value={resource.resource_id}>{resource.file_name}</option>)}</select>
           <button className="icon-button" onClick={() => setPageNumber((page) => Math.max(1, page - 1))}><ChevronLeft size={17} /></button>
           <span>{pageNumber} / {pageCount || '?'}</span>
           <button className="icon-button" onClick={() => setPageNumber((page) => Math.min(pageCount || page + 1, page + 1))}><ChevronRight size={17} /></button>
           <div className="toolbar-spacer" />
+          <div className="pdf-zoom-controls">
+            <button className="icon-button" title="缩小" onClick={() => changeZoom(-0.1)}><Minus size={15} /></button>
+            <button title="恢复 100%" onClick={() => { setFitMode('custom'); setZoom(1) }}>{Math.round((fitMode === 'custom' ? zoom : pageWidth / 820) * 100)}%</button>
+            <button className="icon-button" title="放大" onClick={() => changeZoom(0.1)}><Plus size={15} /></button>
+            <button className={fitMode === 'page' ? 'active' : ''} title="显示完整页面" onClick={() => setFitMode('page')}><Maximize2 size={15} />适页</button>
+            <button className={fitMode === 'width' ? 'active' : ''} title="适应可用宽度" onClick={() => setFitMode('width')}>适宽</button>
+          </div>
           <BoxSelect size={16} /><select value={manualType} onChange={(event) => setManualType(event.target.value)}><option value="inspect">点击查看资源</option><option value="table">框选表格</option><option value="figure">框选图像</option><option value="paragraph">框选段落</option></select>
+          {!inspectorOpen && <button className="icon-button" title="展开定位详情" onClick={() => setInspectorOpen(true)}><PanelRightOpen size={16} /></button>}
         </div>
-        <div className="pdf-scroll">
+        <div className="pdf-scroll" ref={viewportRef}>
           {resourceId ? <Document file={authenticatedFile(api.pdfUrl(projectId, resourceId))} onLoadSuccess={({ numPages }) => setPageCount(numPages)} loading={<div className="empty-state">正在载入 PDF...</div>}>
             <div className="pdf-page-wrap" onPointerDown={beginDraw} onPointerMove={moveDraw} onPointerUp={finishDraw}>
-              <Page pageNumber={pageNumber} width={pageWidth} renderAnnotationLayer renderTextLayer />
+              <Page pageNumber={pageNumber} width={pageWidth} renderAnnotationLayer={false} renderTextLayer onLoadSuccess={(page) => { const viewport = page.getViewport({ scale: 1 }); setPageAspect(viewport.width / viewport.height) }} />
               <div className="pdf-overlay">
-                {pageElementSpans.map(({ element, span, key }) => <div key={key} data-eid={element.element_id} title={`${element.element_type} · ${element.matched_headers.join(', ')}\n双击取消选择`} className={`evidence-box-wrap ${element.element_type} ${active?.element_id === element.element_id ? 'active' : ''} ${element.selected ? 'selected' : ''}`} style={{ left: `${span.bbox[0] * 100}%`, top: `${span.bbox[1] * 100}%`, width: `${(span.bbox[2] - span.bbox[0]) * 100}%`, height: `${(span.bbox[3] - span.bbox[1]) * 100}%` }} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onActive(element) }} onDoubleClick={(event) => { event.stopPropagation(); onToggle(element) }}>
+                {pageElementSpans.map(({ element, span, key }) => <div key={key} data-eid={element.element_id} title={`${element.element_type} · ${elementPageLabel(element)}`} aria-label={`查看${element.element_type}资源 ${elementPageLabel(element)}`} className={`evidence-box-wrap ${element.element_type} ${active?.element_id === element.element_id ? 'active' : ''} ${element.selected ? 'selected' : ''}`} style={{ left: `${span.bbox[0] * 100}%`, top: `${span.bbox[1] * 100}%`, width: `${(span.bbox[2] - span.bbox[0]) * 100}%`, height: `${(span.bbox[3] - span.bbox[1]) * 100}%` }} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onActive(element) }} onDoubleClick={(event) => { event.stopPropagation(); onToggle(element) }}>
                   {active?.element_id === element.element_id && RESIZE_HANDLES.map((h) => <div key={h} className={`resize-handle ${h}`} style={handlePos[h]} onMouseDown={(e) => { e.stopPropagation(); setResizing({ elementId: element.element_id, handle: h, startX: e.clientX, startY: e.clientY, origBbox: [...element.bbox] }) }} />)}
                 </div>)}
                 {drawingStyle && <div className="manual-box" style={drawingStyle} />}
@@ -412,9 +471,9 @@ function PdfWorkbench({ projectId, articleId, elements, resources, active, onAct
         </div>
       </section>
       <aside className="pdf-inspector panel">
-        <div className="panel-heading"><strong>定位详情</strong></div>
+        <div className="panel-heading"><strong>{active ? '资源详情' : '选择汇总'}</strong><button className="icon-button" title="收起资源详情" onClick={() => setInspectorOpen(false)}><PanelRightClose size={16} /></button></div>
         {active ? <>
-          <span className="type-label"><ElementIcon type={active.element_type} /> {active.element_type} · {elementPageLabel(active)} {active.selected ? '· 已选中' : ''}</span>
+          <span className="type-label"><ElementIcon type={active.element_type} /> {active.element_type === 'table' ? '表格' : active.element_type === 'figure' ? '图像' : '段落'} · {elementPageLabel(active)} {active.selected ? '· 已选中' : ''}</span>
           <DetailPreview element={active} projectId={projectId} />
           <label className="edit-label">标题 / 图注<textarea value={editingCaption} onChange={(e) => setEditingCaption(e.target.value)} rows={2} /></label>
           <label className="edit-label">识别文字<textarea value={editingText} onChange={(e) => setEditingText(e.target.value)} rows={5} /></label>
@@ -429,7 +488,13 @@ function PdfWorkbench({ projectId, articleId, elements, resources, active, onAct
 	          <RuleMemoryPanel projectId={projectId} articleId={articleId} activeElement={active} compact />
 	          {!!active.score_reasons?.length && <div className="score-reason-panel"><strong>置信度原因</strong>{active.score_reasons.map((reason) => <span key={reason}>{reason}</span>)}</div>}
 	          <div className="matched-fields">{active.matched_headers.map((field) => <span key={field}>{field}</span>)}</div>
-        </> : <div className="empty-state compact">点击左侧资源查看原文位置，或在页面上拖拽框选。<br />双击资源可取消选择。</div>}
+        </> : <div className="resource-selection-summary">
+          <div><span>表格 / 段落</span><strong>{extractableCount}</strong></div>
+          <div><span>图像</span><strong>{figureCount}</strong></div>
+          <div><span>当前阈值</span><strong>{Math.round(confidenceThreshold * 100)}%</strong></div>
+          <p>点击左侧资源定位原文；双击证据框可加入或移出抽取队列。</p>
+          <button className="primary-button wide" disabled={!selectedCount} onClick={onContinue}>进入资源抽取</button>
+        </div>}
       </aside>
     </div>
   )
@@ -1069,7 +1134,7 @@ function TableMappingCheckPanel({
             setTargets((prev) => ({ ...prev, [key]: targetHeader }))
             setSuggestionOverrides((prev) => ({ ...prev, [key]: { ...(prev[key] || {}), targetHeader, targetUnit: targetUnitByHeader.get(targetHeader) || prev[key]?.targetUnit || '' } }))
           }} />
-          <small><span className={`mapping-source-badge ${item.mapping_source || 'unresolved'}`}>{item.mapping_source === 'llm' ? 'AI' : item.mapping_source === 'memory' ? '规则' : item.mapping_source === 'exact' ? '精确' : item.mapping_source === 'leaf_exact' ? '叶子字段' : item.mapping_source === 'builtin' ? '内置' : item.mapping_source === 'similarity' ? '相似' : '待定'}</span>{Math.round(item.confidence * 100)}% · {item.reason}</small>
+          <small><span className={`mapping-source-badge ${item.mapping_source || 'unresolved'}`}>{item.mapping_source === 'llm' ? 'AI' : item.mapping_source === 'memory' ? '规则' : item.mapping_source === 'organization_advisory' ? '组织规则' : item.mapping_source === 'knowledge' ? '知识库' : item.mapping_source === 'exact' ? '精确' : item.mapping_source === 'leaf_exact' ? '叶子字段' : item.mapping_source === 'builtin' ? '内置' : item.mapping_source === 'similarity' ? '相似' : '待定'}</span>{Math.round(item.confidence * 100)}% · {item.reason}</small>
         </article>
       })}
       {!visibleSuggestions.length && <div className="empty-state compact">没有新的映射建议；可能都已被规则记忆覆盖。</div>}
@@ -1580,20 +1645,29 @@ function CandidateEditToolbar({
 export default function WorkbenchPage() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const agentRunId = searchParams.get('agent_run_id') || ''
-  const showRulesView = searchParams.get('view') === 'rules'
-  const handedOffStep = Number(searchParams.get('step') || 0)
+  const requestedView = searchParams.get('view')
+  const showRulesView = requestedView === 'rules'
   const handedOffStage = searchParams.get('stage') || ''
-  const returnTo = searchParams.get('return_to') || '/chat'
+  const returnTo = searchParams.get('return_to') || '/'
   const { projectId, articleId, activeElement, setActiveElement, activeCell, setActiveCell, logs, addLog, clearLogs } = useAppStore()
-  const [step, setStep] = useState(() => showRulesView ? 2 : Number.isInteger(handedOffStep) && handedOffStep >= 0 && handedOffStep < WORKBENCH_STEPS.length ? handedOffStep : 0)
+  const step = resolveWorkbenchStep(requestedView, searchParams.get('step'))
+  const setStep = useCallback((nextStep: number, nextStage?: string) => {
+    const next = new URLSearchParams(searchParams)
+    next.set('view', nextStep === 0 ? 'resources' : nextStep === 1 ? 'extract' : 'quality')
+    next.delete('step')
+    if (nextStep !== 1) next.delete('stage')
+    else if (nextStage !== undefined) {
+      if (nextStage) next.set('stage', nextStage)
+      else next.delete('stage')
+    }
+    setSearchParams(next, { replace: true })
+  }, [searchParams, setSearchParams])
   const [extractionStage, setExtractionStage] = useState<ExtractionStage>(() => (
     showRulesView
       ? 'mapping'
-      : ['table_standardize', 'mapping', 'tables', 'paragraphs', 'figures', 'edit'].includes(handedOffStage)
-      ? handedOffStage as ExtractionStage
-      : 'table_standardize'
+      : extractionStageFromQuery(handedOffStage) || 'table_standardize'
   ))
   const [activeRecord, setActiveRecord] = useState<CandidateRecord | null>(null)
   const [activeRuleDetail, setActiveRuleDetail] = useState<RuleDetail | null>(null)
@@ -1621,9 +1695,13 @@ export default function WorkbenchPage() {
 
   useEffect(() => {
     if (!showRulesView) return
-    setStep(2)
+    setStep(1, 'mapping')
     setExtractionStage('mapping')
-  }, [showRulesView])
+  }, [setStep, showRulesView])
+  useEffect(() => {
+    const requestedStage = extractionStageFromQuery(handedOffStage)
+    if (step === 1 && requestedStage) setExtractionStage(requestedStage)
+  }, [handedOffStage, step])
 
   const refreshWorkbench = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ['session', projectId, articleId] })
@@ -1678,7 +1756,7 @@ export default function WorkbenchPage() {
     const visibleIds = new Set(visible.map((element) => element.element_id))
     await setSelectedIds(selected.filter((element) => !visibleIds.has(element.element_id)).map((element) => element.element_id))
   }
-  const openInPdf = (element: DocumentElement) => { setActiveElement(element); setStep(1) }
+  const openInPdf = (element: DocumentElement) => { setActiveElement(element); setStep(0) }
   useEffect(() => {
     window.localStorage.setItem('geochem.resourceConfidenceThreshold', String(confidenceThreshold))
   }, [confidenceThreshold])
@@ -1697,6 +1775,7 @@ export default function WorkbenchPage() {
   }
   const switchExtractionStage = (stage: ExtractionStage) => {
     setExtractionStage(stage)
+    setStep(1, stage === 'table_standardize' ? 'standardize' : stage)
     setActiveCell(undefined)
     setActiveRecord(null)
     if (stage !== 'mapping') {
@@ -1828,9 +1907,14 @@ export default function WorkbenchPage() {
     return extractionRight
   })()
 
-  return <div className="page workbench-page">
+  return <div className={`page workbench-page gpt-workspace-page workbench-step-${step}`}>
     {agentRunId && <div className="agent-return-banner"><span>由对话助手交接到此处。保存人工修改后，可返回原对话查看变更摘要并继续。</span><button className="primary-button" onClick={() => returnToChat.mutate()} disabled={returnToChat.isPending}>保存并返回原对话</button></div>}
-    <div className="page-title-row"><div><h1>智能体工作台</h1><p>围绕目标表头发现证据、校核原文并生成样品级候选表。</p></div><span className={`status-pill ${session.data?.discovery_status}`}>{session.data?.discovery_status || '未开始'}</span></div>
+    <PageCommandBar
+      className="workbench-titlebar"
+      title="抽取工作台"
+      description={WORKBENCH_STEPS[step]}
+      status={<span className={`status-pill ${session.data?.discovery_status}`}>{session.data?.discovery_status || '未开始'}</span>}
+    />
     <div className="stepper">{WORKBENCH_STEPS.map((label, index) => <div
       key={label}
       role="button"
@@ -1841,24 +1925,37 @@ export default function WorkbenchPage() {
     ><span>{index < step ? <Check size={14} /> : index + 1}</span>{label}</div>)}</div>
 
     <div className="workbench-stage">
-      {step === 0 && <div className="discovery-layout">
-        <section className="candidate-pool panel">
-          <div className="resource-toolbar">
-            <button className="primary-button" disabled={busy || !articleId} onClick={() => runTask(() => api.discover(projectId, articleId))}>{busy ? <LoaderCircle className="spin" size={16} /> : <Sparkles size={16} />}重新发现</button>
-            <select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}><option value="all">全部资源</option><option value="table">表格</option><option value="figure">图像</option><option value="paragraph">相关段落</option></select>
-            <label className="threshold-control">阈值 <input type="range" min="0" max="1" step="0.01" value={confidenceThreshold} onChange={(event) => setConfidenceThreshold(Number(event.target.value))} /><strong>{Math.round(confidenceThreshold * 100)}%</strong></label>
-            <button onClick={applyThresholdSelection}>按阈值预选</button>
-            <button disabled={!visible.length} onClick={selectVisible}>全选</button>
-            <button disabled={!visible.some((element) => element.selected)} onClick={clearVisible}>取消全选</button>
-            <div className="search-box"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索页码、表头或证据..." /></div>
-          </div>
-          <div className="panel-heading"><strong>自动发现的相关资源</strong><span>{visible.length}</span></div>
-          <div className="element-list">{visible.map((element) => <ElementCard key={element.element_id} element={element} active={activeElement?.element_id === element.element_id} selected={element.selected} onOpen={() => setActiveElement(element)} onToggle={() => toggle(element)} />)}{!visible.length && <div className="empty-state">{busy ? '智能体正在逐页分析...' : '当前文章还没有发现资源。'}</div>}</div>
-        </section>
-        <section className="selection-panel panel"><div className="panel-heading"><strong>抽取队列</strong><span>{selected.length}</span></div><div className="queue-summary"><span>表格/段落 {extractableSelected.length}</span><span>图像 {selectedFigures.length}</span></div><div className="selected-list">{selected.map((element) => <button key={element.element_id} onClick={() => openInPdf(element)}><ElementIcon type={element.element_type} /><span>{elementPageLabel(element)}<br /><small>{element.caption || element.text_content.slice(0, 65)}</small></span><Eye size={15} /></button>)}{!selected.length && <div className="empty-state compact">点击资源左侧复选按钮，将可信证据加入抽取队列。</div>}</div><button className="primary-button wide" disabled={!selected.length} onClick={() => setStep(1)}>校核原文并示教 <ArrowRight size={16} /></button></section>
+      {step === 0 && <div className="resource-review-workspace">
+        <div className="resource-review-toolbar panel">
+          <button className="primary-button" disabled={busy || !articleId} onClick={() => runTask(() => api.discover(projectId, articleId))}>{busy ? <LoaderCircle className="spin" size={16} /> : <Sparkles size={16} />}重新发现</button>
+          <select value={typeFilter} aria-label="筛选资源类型" onChange={(event) => setTypeFilter(event.target.value)}><option value="all">全部资源</option><option value="table">表格</option><option value="figure">图像</option><option value="paragraph">相关段落</option></select>
+          <label className="threshold-control">阈值 <input type="range" min="0" max="1" step="0.01" value={confidenceThreshold} onChange={(event) => setConfidenceThreshold(Number(event.target.value))} /><strong>{Math.round(confidenceThreshold * 100)}%</strong></label>
+          <button onClick={applyThresholdSelection}>按阈值预选</button>
+          <button disabled={!visible.length} onClick={selectVisible}>全选</button>
+          <button disabled={!visible.some((element) => element.selected)} onClick={clearVisible}>取消全选</button>
+          <div className="search-box"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索页码、表头或证据" /></div>
+          <span className="resource-selection-count">已选 <strong>{selected.length}</strong></span>
+          <button className="primary-button" disabled={!selected.length} title={!selected.length ? '请先选择至少一个资源' : '进入资源抽取与候选处理'} onClick={() => setStep(1)}>进入资源抽取 <ArrowRight size={15} /></button>
+        </div>
+        <PdfWorkbench
+          projectId={projectId}
+          articleId={articleId}
+          elements={all}
+          indexElements={activeElement && !visible.some((element) => element.element_id === activeElement.element_id) ? [activeElement, ...visible] : visible}
+          resources={resources.data || []}
+          active={activeElement}
+          onActive={setActiveElement}
+          refresh={refreshWorkbench}
+          onToggle={toggle}
+          selectedCount={selected.length}
+          extractableCount={extractableSelected.length}
+          figureCount={selectedFigures.length}
+          confidenceThreshold={confidenceThreshold}
+          busy={busy}
+          onContinue={() => setStep(1)}
+        />
       </div>}
-      {step === 1 && <PdfWorkbench projectId={projectId} articleId={articleId} elements={all} resources={resources.data || []} active={activeElement} onActive={setActiveElement} refresh={refreshWorkbench} onToggle={toggle} />}
-      {step === 2 && <div className={`processing-layout ${extractionStage === 'figures' ? 'figure-mode' : ''} ${stageRailCollapsed ? 'rail-collapsed' : ''}`}>
+      {step === 1 && <div className={`processing-layout ${extractionStage === 'figures' ? 'figure-mode' : ''} ${stageRailCollapsed ? 'rail-collapsed' : ''}`}>
         <section className="source-strip panel">
           {!stageRailCollapsed && <div className="panel-heading"><strong>资源抽取</strong><span>{selected.length}</span></div>}
           <ProcessingStageCards
@@ -1869,12 +1966,12 @@ export default function WorkbenchPage() {
             collapsed={stageRailCollapsed}
             onStage={switchExtractionStage}
             onToggleCollapsed={() => setStageRailCollapsed((value) => !value)}
-            onStandardizeTables={() => runTask(() => api.standardizeTables(projectId, articleId, false), 2)}
-            onExtractTables={() => runTask(() => api.extractTables(projectId, articleId, false), 2)}
-            onExtractAll={() => runTask(() => api.extractParagraphs(projectId, articleId, [], true), 2)}
+            onStandardizeTables={() => runTask(() => api.standardizeTables(projectId, articleId, false), 1)}
+            onExtractTables={() => runTask(() => api.extractTables(projectId, articleId, false), 1)}
+            onExtractAll={() => runTask(() => api.extractParagraphs(projectId, articleId, [], true), 1)}
             onValidateEvidence={async () => { if (activeBatchId) { await api.validateEvidence(projectId, activeBatchId); queryClient.invalidateQueries({ queryKey: ['batch', projectId, activeBatchId] }) } }}
             onMerge={async () => { await api.mergeCandidates(projectId, articleId); if (activeBatchId) await api.validateEvidence(projectId, activeBatchId); refreshWorkbench(); }}
-            onNext={() => setStep(3)}
+            onNext={() => setStep(2)}
           />
         </section>
         {extractionMain}
@@ -1883,7 +1980,7 @@ export default function WorkbenchPage() {
           {stageRightPanel}
         </aside>
       </div>}
-      {step === 3 && <MappingReview payload={batch.data} elements={all} projectId={projectId} headerConfigId={session.data?.header_config_id || ''} onRefresh={() => {
+      {step === 2 && <MappingReview payload={batch.data} elements={all} projectId={projectId} headerConfigId={session.data?.header_config_id || ''} onRefresh={() => {
         queryClient.invalidateQueries({ queryKey: ['batch', projectId, activeBatchId] })
         queryClient.invalidateQueries({ queryKey: ['rules', projectId] })
         queryClient.invalidateQueries({ queryKey: ['reviews', projectId] })

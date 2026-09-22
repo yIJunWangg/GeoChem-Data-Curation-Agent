@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 import json
+import pytest
 
 from geochem.background_tasks import TaskDispatcher, WorkflowTaskStore, celery_app, create_celery_app
 from geochem.core.runtime import load_runtime_settings
@@ -31,6 +32,32 @@ def test_task_store_reuses_active_operation(tmp_path):
     assert second_created is False
     assert second == first
     assert first.startswith("TASK_")
+
+
+def test_task_store_enforces_per_user_concurrency_limit(tmp_path):
+    pm, _project_config = _project(tmp_path)
+    store = WorkflowTaskStore(pm)
+
+    store.create_or_active(
+        "TASK_TEST",
+        "ART_1",
+        "resource_discovery",
+        "resource_discovery",
+        {},
+        actor_user_id="curator-actor",
+        max_active_tasks=1,
+    )
+
+    with pytest.raises(ValueError, match="并发上限为 1"):
+        store.create_or_active(
+            "TASK_TEST",
+            "ART_2",
+            "table_extraction",
+            "table_extraction",
+            {},
+            actor_user_id="curator-actor",
+            max_active_tasks=1,
+        )
 
 
 def test_task_store_recognizes_legacy_active_task_without_key(tmp_path):

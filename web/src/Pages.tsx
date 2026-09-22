@@ -8,10 +8,11 @@ import {
 } from 'lucide-react'
 import { api, authenticatedFile, watchTask } from './api'
 import { useAppStore } from './store'
+import { PageCommandBar } from './WorkspaceUI'
 import type { Article } from './types'
 
 function PageHeader({ title, subtitle, action }: { title: string; subtitle: string; action?: React.ReactNode }) {
-  return <div className="page-title-row"><div><h1>{title}</h1><p>{subtitle}</p></div>{action}</div>
+  return <PageCommandBar title={title} description={subtitle}>{action}</PageCommandBar>
 }
 
 function SimpleTable({ rows, columns }: { rows: Record<string, any>[]; columns: {key:string;label:string;render?:(row:Record<string,any>)=>React.ReactNode}[] }) {
@@ -128,7 +129,7 @@ export function DashboardPage() {
     return counts
   }, [standardized.data])
 
-  return <div className="page dashboard-page"><PageHeader title="项目概览" subtitle="管理文献与数据资产，跟踪抽取任务进度和标准化状态。" />
+  return <div className="page dashboard-page gpt-workspace-page"><PageHeader title="项目概览" subtitle="文献、导入与任务状态" />
     <div className="metric-grid dashboard-metrics">{cards.map(([label, value, Icon, color]) => <section className="metric-tile" key={label}><Icon color={color} size={19} /><span>{label}</span><strong>{value}</strong></section>)}</div>
     <div className="dashboard-grid">
       <section className="panel dashboard-literature"><div className="panel-heading"><strong>最近文献</strong><span>{articles.data?.length || 0}</span></div>
@@ -136,7 +137,7 @@ export function DashboardPage() {
           const config = headers.data?.find((item) => item.config_id === article.header_config_id)
           const standardizedCount = standardizedByArticle.get(article.article_id) || 0
           const reviewComplete = standardizedCount > 0 || ['completed', 'standardized', 'reviewed'].includes(article.status || '')
-          return <tr key={article.article_id} className={article.article_id === articleId ? 'active' : ''} onClick={() => setArticleId(article.article_id)}><td><strong>{article.title || article.article_id}</strong><small>{article.journal || article.url || article.article_id}</small></td><td>{article.doi || '未登记 DOI'}</td><td>{config?.name || <span className="status-text warning">未分配</span>}</td><td>{article.element_count || 0}</td><td><span className={`article-status ${reviewComplete ? 'reviewed' : 'pending'}`} title={reviewComplete ? `${standardizedCount} 条标准化记录` : '尚未生成标准化记录'}>{reviewComplete ? '完成审核' : '待审核'}</span></td><td><div className="row-actions"><button title="进入抽取工作台" onClick={(event) => { event.stopPropagation(); setArticleId(article.article_id); navigate('/workbench') }}><Workflow size={14}/></button><button title="在对话助手中打开" onClick={(event) => { event.stopPropagation(); setArticleId(article.article_id); navigate('/chat') }}><Bot size={14}/></button></div></td></tr>
+          return <tr key={article.article_id} className={article.article_id === articleId ? 'active' : ''} onClick={() => setArticleId(article.article_id)}><td><strong>{article.title || article.article_id}</strong><small>{article.journal || article.url || article.article_id}</small></td><td>{article.doi || '未登记 DOI'}</td><td>{config?.name || <span className="status-text warning">未分配</span>}</td><td>{article.element_count || 0}</td><td><span className={`article-status ${reviewComplete ? 'reviewed' : 'pending'}`} title={reviewComplete ? `${standardizedCount} 条标准化记录` : '尚未生成标准化记录'}>{reviewComplete ? '完成审核' : '待审核'}</span></td><td><div className="row-actions"><button title="进入抽取工作台" onClick={(event) => { event.stopPropagation(); setArticleId(article.article_id); navigate('/workbench') }}><Workflow size={14}/></button><button title="在科研助手中打开" onClick={(event) => { event.stopPropagation(); setArticleId(article.article_id); navigate('/') }}><Bot size={14}/></button></div></td></tr>
         })}</tbody></table>{!articles.data?.length && <div className="empty-state compact">还没有文献，可从右侧快速导入。</div>}</div>
       </section>
       <section ref={importRef} className={`panel dashboard-import ${quickResource ? 'has-resource' : ''}`}><div className="panel-heading"><strong>快速导入文献</strong><FileInput size={17}/></div>
@@ -149,7 +150,7 @@ export function DashboardPage() {
         <label className="dashboard-drop-zone"><Upload size={22}/><strong>拖放 PDF / Excel / CSV 到此处</strong><span>PDF 建立新文章；数据附件加入当前文献</span><input type="file" accept=".pdf,.xlsx,.xls,.csv" onChange={(event) => { importFile(event.target.files?.[0]); event.target.value = '' }}/></label>
         <p className="quick-import-status">{status}</p>
       </section>
-      <section className="panel dashboard-tasks"><div className="panel-heading"><strong>最近处理任务</strong><span>{recentThreads.length}</span></div><div className="recent-task-list">{recentThreads.map((thread) => <button key={thread.thread_id} onClick={() => navigate('/chat')}><Bot size={15}/><span><strong>{thread.title}</strong><small>{thread.active_run_status || '对话已保存'}</small></span><time>{thread.updated_at ? new Date(thread.updated_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}</time></button>)}{!recentThreads.length && <div className="empty-state compact">暂无最近任务。</div>}</div></section>
+      <section className="panel dashboard-tasks"><div className="panel-heading"><strong>最近处理任务</strong><span>{recentThreads.length}</span></div><div className="recent-task-list">{recentThreads.map((thread) => <button key={thread.thread_id} onClick={() => navigate(`/?thread_id=${encodeURIComponent(thread.thread_id)}`)}><Bot size={15}/><span><strong>{thread.title}</strong><small>{thread.active_run_status || '对话已保存'}</small></span><time>{thread.updated_at ? new Date(thread.updated_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}</time></button>)}{!recentThreads.length && <div className="empty-state compact">暂无最近任务。</div>}</div></section>
       <section className="panel dashboard-activity"><div className="panel-heading"><strong>活动与状态</strong><Activity size={17}/></div><div className="activity-list"><div><CheckCircle2 size={16}/><span><strong>本地服务正常</strong><small>API 与项目数据库可用</small></span></div><div><BookOpen size={16}/><span><strong>{metrics.data?.articles || 0} 篇文献</strong><small>{metrics.data?.elements || 0} 个相关资源</small></span></div><div><Clock3 size={16}/><span><strong>{metrics.data?.reviews || 0} 项待审核</strong><small>确认后可生成标准化记录</small></span></div></div></section>
     </div>
   </div>
@@ -172,7 +173,7 @@ export function HeaderPage() {
     ...field,
   })) || []
   const selectedField = rows[Math.min(activeFieldIndex, Math.max(0, rows.length - 1))]
-  return <div className="page header-page"><PageHeader title="表头管理" subtitle="维护可复用的目标表头、字段说明和输出单位，并分配给文章。" action={<label className="primary-button file-button"><Upload size={16}/> 导入 CSV / XLSX<input type="file" accept=".csv,.xlsx,.xls" onChange={async (event) => { const file=event.target.files?.[0]; if(file){ await api.importHeaders(projectId,file); queryClient.invalidateQueries({queryKey:['headers',projectId]}); event.target.value='' } }}/></label>} />
+  return <div className="page header-page gpt-workspace-page"><PageHeader title="表头管理" subtitle={active ? `${active.name} · ${rows.length} 个字段` : '维护可复用目标表头'} action={<label className="primary-button file-button"><Upload size={16}/> 导入 CSV / XLSX<input type="file" accept=".csv,.xlsx,.xls" onChange={async (event) => { const file=event.target.files?.[0]; if(file){ await api.importHeaders(projectId,file); queryClient.invalidateQueries({queryKey:['headers',projectId]}); event.target.value='' } }}/></label>} />
     <div className="header-management-layout"><aside className="panel config-list"><div className="panel-heading"><strong>已保存表头</strong><span>{configs.data?.length || 0}</span></div>{configs.data?.map((config) => <button className={active?.config_id === config.config_id ? 'active' : ''} key={config.config_id} onClick={() => { setActiveId(config.config_id); setActiveFieldIndex(0) }}><FileSpreadsheet size={17}/><span><strong>{config.name}</strong><small>{config.field_count} 个字段</small></span></button>)}</aside>
       <section className="panel header-editor"><div className="panel-heading"><strong>{active?.name || '未选择配置'}</strong><span>{rows.length} 列</span></div><div className="simple-table-wrap selectable-header-table"><table className="simple-table"><thead><tr><th>#</th><th>显示表头</th><th>标准字段</th><th>目标单位</th><th>字段说明</th></tr></thead><tbody>{rows.map((row, index) => <tr key={`${row.display_header}-${index}`} className={index === activeFieldIndex ? 'active' : ''} onClick={() => setActiveFieldIndex(index)}><td>{index + 1}</td><td>{row.display_header || '—'}</td><td>{row.canonical_field || '—'}</td><td>{row.target_unit || '—'}</td><td>{row.description || '—'}</td></tr>)}</tbody></table></div></section>
       <aside className="panel header-field-inspector"><div className="panel-heading"><strong>字段详情</strong></div>{selectedField ? <div className="header-field-detail"><label>显示表头<input value={selectedField.display_header || ''} readOnly/></label><label>标准字段<input value={selectedField.canonical_field || ''} readOnly/></label><label>目标单位<input value={selectedField.target_unit || ''} readOnly/></label><label>字段说明<textarea value={selectedField.description || ''} readOnly rows={6}/></label><small>字段名称、单位和说明来自当前保存配置。重新导入配置可批量更新。</small></div> : <div className="empty-state compact">选择中间字段查看详情。</div>}<div className="header-assignment"><strong>分配给文章</strong><select value={(articles.data || []).find((article) => article.article_id === articleId)?.header_config_id || ''} disabled={!articleId || !active} onChange={async (event) => { if (!articleId) return; await api.assignHeader(projectId, articleId, event.target.value); queryClient.invalidateQueries({ queryKey: ['articles', projectId] }) }}><option value="">未分配</option>{configs.data?.map((config) => <option key={config.config_id} value={config.config_id}>{config.name}</option>)}</select><small>{articleId ? '应用到当前文献。' : '请先在顶部选择当前文献。'}</small></div></aside>
@@ -249,7 +250,7 @@ export function StandardizedPage() {
     }
   }
 
-  return <div className="page standardized-page"><PageHeader title="标准化导出" subtitle="查看已完成审核的记录，并按用户表头导出当前文献。"
+  return <div className="page standardized-page gpt-workspace-page"><PageHeader title="标准化导出" subtitle={`${rows.length} 条已完成审核记录`}
     action={<div className="standardized-export-actions">
       <select value={filterArticle} onChange={(e) => setFilterArticle(e.target.value)}><option value="">全部文章</option>{(articles.data||[]).map((a) => <option key={a.article_id} value={a.article_id}>{a.title || a.article_id}</option>)}</select>
       <button className="primary-button" title="导出顶部当前文献或筛选文献" disabled={!exportArticleId} onClick={() => doExport('csv')}><Download size={16}/> CSV</button>
@@ -503,7 +504,7 @@ export function SettingsPage() {
     setActiveProvider(provider.name)
   }
 
-  return <div className="page"><PageHeader title="设置" subtitle="配置一个可用模型，GeoChem 会把它应用到全部智能体文本任务。" action={activeTab === 'advanced' ? <button className="primary-button" onClick={save}>保存高级设置</button> : undefined} />
+  return <div className="page settings-page gpt-workspace-page"><PageHeader title="设置" subtitle="模型、用量与本地服务" action={activeTab === 'advanced' ? <button className="primary-button" onClick={save}>保存高级设置</button> : undefined} />
     <div className="settings-layout">
       <nav className="panel settings-nav">
         {TABS.map(tab => <button key={tab.key} className={activeTab === tab.key ? 'active' : ''} onClick={() => setActiveTab(tab.key)}>

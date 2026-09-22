@@ -45,6 +45,9 @@ model may request a tool; it never receives a database connection or raw path.
   validated or uploaded.
 - `request_article_import`: creates an import request for a DOI or public URL;
   it never bypasses access controls.
+- `request_header_config_import`: opens the independent CSV/XLSX/XLS header
+  configuration importer. Header configurations are user-defined project
+  templates and are not generated only from article tables.
 - `start_curation_workflow`: starts or resumes the LangGraph article workflow.
   It requires an article; table-header confirmation, resource confirmation,
   review, standardization, and export remain user checkpoints.

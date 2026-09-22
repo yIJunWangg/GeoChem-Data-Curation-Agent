@@ -15,8 +15,32 @@ _POSTGRES_INITIALIZED: set[str] = set()
 _POSTGRES_INITIALIZE_LOCK = Lock()
 
 SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS organizations (
+    organization_id TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    slug            TEXT NOT NULL UNIQUE,
+    status          TEXT DEFAULT 'active',
+    created_by      TEXT DEFAULT '',
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS organization_members (
+    membership_id  TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL,
+    user_id        TEXT NOT NULL,
+    role           TEXT NOT NULL DEFAULT 'viewer',
+    status         TEXT NOT NULL DEFAULT 'active',
+    invited_by     TEXT DEFAULT '',
+    created_at     TEXT NOT NULL,
+    updated_at     TEXT NOT NULL,
+    UNIQUE(organization_id, user_id),
+    FOREIGN KEY (organization_id) REFERENCES organizations(organization_id)
+);
+
 CREATE TABLE IF NOT EXISTS projects (
     project_id   TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL DEFAULT 'ORG_DEFAULT',
     project_name TEXT NOT NULL,
     description  TEXT DEFAULT '',
     research_field TEXT DEFAULT '',
@@ -371,9 +395,135 @@ CREATE TABLE IF NOT EXISTS learned_extraction_rules (
     scope         TEXT DEFAULT 'project',
     enabled       INTEGER DEFAULT 1,
     element_id    TEXT DEFAULT '',
+    organization_id TEXT DEFAULT '',
+    source_submission_id TEXT DEFAULT '',
+    revision      INTEGER DEFAULT 1,
+    supersedes_rule_id TEXT DEFAULT '',
+    published_by TEXT DEFAULT '',
+    published_at TEXT,
     created_at    TEXT NOT NULL,
     created_by    TEXT DEFAULT 'agent',
     FOREIGN KEY (project_id) REFERENCES projects(project_id)
+);
+
+CREATE TABLE IF NOT EXISTS mapping_knowledge_releases (
+    release_id           TEXT PRIMARY KEY,
+    version              TEXT NOT NULL UNIQUE,
+    name                 TEXT NOT NULL,
+    status               TEXT NOT NULL DEFAULT 'staged',
+    source_manifest_json TEXT DEFAULT '[]',
+    created_by           TEXT DEFAULT 'system',
+    created_at           TEXT NOT NULL,
+    published_at         TEXT
+);
+
+CREATE TABLE IF NOT EXISTS mapping_knowledge_concepts (
+    concept_version_id    TEXT PRIMARY KEY,
+    concept_id            TEXT NOT NULL,
+    release_id            TEXT NOT NULL,
+    canonical_name        TEXT NOT NULL,
+    concept_type          TEXT NOT NULL,
+    chemical_form         TEXT DEFAULT '',
+    unit_dimension        TEXT DEFAULT '',
+    allowed_units_json    TEXT DEFAULT '[]',
+    context_json          TEXT DEFAULT '[]',
+    forbidden_forms_json  TEXT DEFAULT '[]',
+    source_references_json TEXT DEFAULT '[]',
+    metadata_json         TEXT DEFAULT '{}',
+    created_at            TEXT NOT NULL,
+    UNIQUE(release_id, concept_id),
+    FOREIGN KEY (release_id) REFERENCES mapping_knowledge_releases(release_id)
+);
+
+CREATE TABLE IF NOT EXISTS mapping_knowledge_terms (
+    term_id             TEXT PRIMARY KEY,
+    concept_version_id  TEXT NOT NULL,
+    display_term        TEXT NOT NULL,
+    normalized_term     TEXT NOT NULL,
+    term_type           TEXT DEFAULT 'alias',
+    language            TEXT DEFAULT 'en',
+    score               REAL DEFAULT 0.95,
+    created_at          TEXT NOT NULL,
+    UNIQUE(concept_version_id, normalized_term),
+    FOREIGN KEY (concept_version_id) REFERENCES mapping_knowledge_concepts(concept_version_id)
+);
+
+CREATE TABLE IF NOT EXISTS mapping_knowledge_imports (
+    import_id          TEXT PRIMARY KEY,
+    source_name        TEXT NOT NULL,
+    source_url         TEXT DEFAULT '',
+    source_version     TEXT DEFAULT '',
+    status             TEXT NOT NULL DEFAULT 'staged',
+    staged_release_id  TEXT DEFAULT '',
+    diff_json          TEXT DEFAULT '{}',
+    error_message      TEXT DEFAULT '',
+    created_by         TEXT DEFAULT 'system',
+    created_at         TEXT NOT NULL,
+    published_at       TEXT
+);
+
+CREATE TABLE IF NOT EXISTS mapping_rule_imports (
+    import_id       TEXT PRIMARY KEY,
+    project_id      TEXT NOT NULL,
+    organization_id TEXT NOT NULL,
+    filename        TEXT NOT NULL,
+    file_hash       TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'parsed',
+    total_rows      INTEGER DEFAULT 0,
+    valid_rows      INTEGER DEFAULT 0,
+    invalid_rows    INTEGER DEFAULT 0,
+    preview_json    TEXT DEFAULT '[]',
+    errors_json     TEXT DEFAULT '[]',
+    created_by      TEXT NOT NULL,
+    created_at      TEXT NOT NULL,
+    submitted_at    TEXT,
+    FOREIGN KEY (project_id) REFERENCES projects(project_id),
+    FOREIGN KEY (organization_id) REFERENCES organizations(organization_id)
+);
+
+CREATE TABLE IF NOT EXISTS mapping_rule_submissions (
+    submission_id          TEXT PRIMARY KEY,
+    import_id              TEXT DEFAULT '',
+    project_id             TEXT NOT NULL,
+    organization_id        TEXT NOT NULL,
+    article_id             TEXT DEFAULT '',
+    source_term            TEXT NOT NULL,
+    target_canonical_field TEXT NOT NULL,
+    target_header          TEXT DEFAULT '',
+    source_unit            TEXT DEFAULT '',
+    target_unit            TEXT DEFAULT '',
+    chemical_form          TEXT DEFAULT '',
+    context_text           TEXT DEFAULT '',
+    conversion_formula     TEXT DEFAULT '',
+    evidence               TEXT DEFAULT '',
+    notes                  TEXT DEFAULT '',
+    knowledge_concept_id   TEXT DEFAULT '',
+    knowledge_release_id   TEXT DEFAULT '',
+    scope                   TEXT NOT NULL DEFAULT 'organization',
+    confidence              REAL DEFAULT 0.95,
+    status                  TEXT NOT NULL DEFAULT 'draft',
+    conflict_status         TEXT DEFAULT 'clear',
+    validation_json         TEXT DEFAULT '{}',
+    supersedes_rule_id      TEXT DEFAULT '',
+    created_by              TEXT NOT NULL,
+    created_at              TEXT NOT NULL,
+    updated_at              TEXT NOT NULL,
+    submitted_at            TEXT,
+    reviewed_at             TEXT,
+    FOREIGN KEY (project_id) REFERENCES projects(project_id),
+    FOREIGN KEY (organization_id) REFERENCES organizations(organization_id),
+    FOREIGN KEY (supersedes_rule_id) REFERENCES learned_extraction_rules(rule_id)
+);
+
+CREATE TABLE IF NOT EXISTS mapping_rule_reviews (
+    review_id       TEXT PRIMARY KEY,
+    submission_id   TEXT NOT NULL,
+    decision        TEXT NOT NULL,
+    comment         TEXT DEFAULT '',
+    snapshot_json   TEXT DEFAULT '{}',
+    reviewed_by     TEXT NOT NULL,
+    reviewed_at     TEXT NOT NULL,
+    FOREIGN KEY (submission_id) REFERENCES mapping_rule_submissions(submission_id)
 );
 
 CREATE TABLE IF NOT EXISTS record_patches (
@@ -552,6 +702,7 @@ CREATE TABLE IF NOT EXISTS candidate_cells (
 CREATE TABLE IF NOT EXISTS workflow_tasks (
     task_id       TEXT PRIMARY KEY,
     project_id    TEXT NOT NULL,
+    created_by_user_id TEXT DEFAULT '',
     article_id    TEXT,
     task_type     TEXT NOT NULL,
     status        TEXT DEFAULT 'pending',
@@ -586,10 +737,12 @@ CREATE TABLE IF NOT EXISTS workflow_task_events (
 CREATE TABLE IF NOT EXISTS chat_threads (
     thread_id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL,
+    created_by_user_id TEXT DEFAULT '',
     article_id TEXT,
     title TEXT DEFAULT '',
     scope TEXT DEFAULT 'article',
     selection_context_json TEXT DEFAULT '{}',
+    latest_actionable_message_id TEXT DEFAULT '',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     FOREIGN KEY (project_id) REFERENCES projects(project_id)
@@ -605,6 +758,8 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     model_name TEXT DEFAULT '',
     agent_run_id TEXT DEFAULT '',
     ui_payload_json TEXT DEFAULT '{}',
+    action_state TEXT DEFAULT '',
+    superseded_by_message_id TEXT DEFAULT '',
     created_at TEXT NOT NULL,
     FOREIGN KEY (thread_id) REFERENCES chat_threads(thread_id)
 );
@@ -626,6 +781,7 @@ CREATE TABLE IF NOT EXISTS chat_citations (
 CREATE TABLE IF NOT EXISTS agent_runs (
     run_id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL,
+    created_by_user_id TEXT DEFAULT '',
     article_id TEXT,
     thread_id TEXT,
     status TEXT DEFAULT 'pending',
@@ -710,10 +866,29 @@ CREATE TABLE IF NOT EXISTS agent_tool_calls (
     output_summary_json TEXT DEFAULT '{}',
     status TEXT DEFAULT 'pending',
     error_message TEXT DEFAULT '',
+    trust_source TEXT DEFAULT 'trusted_user',
+    policy_decision TEXT DEFAULT 'allowed',
+    confirmation_status TEXT DEFAULT 'not_required',
+    rejection_reason TEXT DEFAULT '',
+    duration_ms INTEGER DEFAULT 0,
     idempotency_key TEXT DEFAULT '',
     started_at TEXT NOT NULL,
     finished_at TEXT,
     FOREIGN KEY (run_id) REFERENCES agent_runs(run_id)
+);
+
+CREATE TABLE IF NOT EXISTS content_security_assessments (
+    assessment_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    source_type TEXT DEFAULT '',
+    source_id TEXT DEFAULT '',
+    content_hash TEXT NOT NULL,
+    trust_level TEXT NOT NULL,
+    risk_level TEXT DEFAULT 'low',
+    reason_codes_json TEXT DEFAULT '[]',
+    assessed_at TEXT NOT NULL,
+    UNIQUE(project_id, content_hash, trust_level),
+    FOREIGN KEY (project_id) REFERENCES projects(project_id)
 );
 
 CREATE TABLE IF NOT EXISTS literature_search_runs (
@@ -899,6 +1074,8 @@ CREATE TABLE IF NOT EXISTS user_ai_usage_monthly (
 );
 
 CREATE INDEX IF NOT EXISTS idx_articles_project ON articles(project_id);
+CREATE INDEX IF NOT EXISTS idx_organization_members_user ON organization_members(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_organization_members_org ON organization_members(organization_id, status);
 CREATE INDEX IF NOT EXISTS idx_resources_article ON resources(article_id);
 CREATE INDEX IF NOT EXISTS idx_article_evidence_article ON article_evidence(article_id);
 CREATE INDEX IF NOT EXISTS idx_header_configs_project ON header_configs(project_id);
@@ -924,6 +1101,14 @@ CREATE INDEX IF NOT EXISTS idx_storage_objects_user ON storage_objects(user_id, 
 CREATE INDEX IF NOT EXISTS idx_user_ai_usage_month ON user_ai_usage_monthly(usage_month, user_id);
 CREATE INDEX IF NOT EXISTS idx_teaching_events_project ON teaching_events(project_id);
 CREATE INDEX IF NOT EXISTS idx_learned_rules_project ON learned_extraction_rules(project_id);
+CREATE INDEX IF NOT EXISTS idx_mapping_knowledge_release_status ON mapping_knowledge_releases(status, published_at);
+CREATE INDEX IF NOT EXISTS idx_mapping_knowledge_concept_release ON mapping_knowledge_concepts(release_id, concept_id);
+CREATE INDEX IF NOT EXISTS idx_mapping_knowledge_term_normalized ON mapping_knowledge_terms(normalized_term);
+CREATE INDEX IF NOT EXISTS idx_mapping_knowledge_import_status ON mapping_knowledge_imports(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_mapping_rule_import_project ON mapping_rule_imports(project_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_mapping_rule_submission_project ON mapping_rule_submissions(project_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_mapping_rule_submission_org ON mapping_rule_submissions(organization_id, status, submitted_at);
+CREATE INDEX IF NOT EXISTS idx_mapping_rule_review_submission ON mapping_rule_reviews(submission_id, reviewed_at);
 CREATE INDEX IF NOT EXISTS idx_record_patches_table ON record_patches(table_id);
 CREATE INDEX IF NOT EXISTS idx_extraction_candidates_evidence ON extraction_candidates(evidence_id);
 CREATE INDEX IF NOT EXISTS idx_extraction_candidates_project ON extraction_candidates(project_id);
@@ -1061,6 +1246,9 @@ class Database:
             "article_dir": "TEXT DEFAULT ''",
             "owner_user_id": "TEXT DEFAULT ''",
         })
+        self._ensure_table_columns(conn, "projects", {
+            "organization_id": "TEXT NOT NULL DEFAULT 'ORG_DEFAULT'",
+        })
         self._ensure_table_columns(conn, "calculation_records", {
             "candidate_record_id": "TEXT",
             "cell_id": "TEXT",
@@ -1076,7 +1264,17 @@ class Database:
         self._ensure_table_columns(conn, "learned_extraction_rules", {
             "enabled": "INTEGER DEFAULT 1",
             "element_id": "TEXT DEFAULT ''",
+            "organization_id": "TEXT DEFAULT ''",
+            "source_submission_id": "TEXT DEFAULT ''",
+            "revision": "INTEGER DEFAULT 1",
+            "supersedes_rule_id": "TEXT DEFAULT ''",
+            "published_by": "TEXT DEFAULT ''",
+            "published_at": "TEXT",
         })
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_learned_rules_org "
+            "ON learned_extraction_rules(organization_id, scope, review_status)"
+        )
         self._ensure_table_columns(conn, "candidate_cells", {
             "applied_rule_id": "TEXT DEFAULT ''",
             "extraction_method": "TEXT DEFAULT ''",
@@ -1093,6 +1291,7 @@ class Database:
             "structured_status": "TEXT DEFAULT ''",
         })
         self._ensure_table_columns(conn, "agent_runs", {
+            "created_by_user_id": "TEXT DEFAULT ''",
             "workflow_step": "TEXT DEFAULT ''",
             "checkpoint_kind": "TEXT DEFAULT ''",
             "workbench_handoff_status": "TEXT DEFAULT ''",
@@ -1106,18 +1305,45 @@ class Database:
             "model_name": "TEXT DEFAULT ''",
         })
         self._ensure_table_columns(conn, "chat_threads", {
+            "created_by_user_id": "TEXT DEFAULT ''",
             "selection_context_json": "TEXT DEFAULT '{}'",
+            "latest_actionable_message_id": "TEXT DEFAULT ''",
         })
         self._ensure_table_columns(conn, "chat_messages", {
             "ui_payload_json": "TEXT DEFAULT '{}'",
+            "action_state": "TEXT DEFAULT ''",
+            "superseded_by_message_id": "TEXT DEFAULT ''",
+        })
+        self._ensure_table_columns(conn, "agent_tool_calls", {
+            "trust_source": "TEXT DEFAULT 'trusted_user'",
+            "policy_decision": "TEXT DEFAULT 'allowed'",
+            "confirmation_status": "TEXT DEFAULT 'not_required'",
+            "rejection_reason": "TEXT DEFAULT ''",
+            "duration_ms": "INTEGER DEFAULT 0",
         })
         self._ensure_table_columns(conn, "workflow_tasks", {
+            "created_by_user_id": "TEXT DEFAULT ''",
             "operation_name": "TEXT DEFAULT ''",
             "payload_json": "TEXT DEFAULT '{}'",
             "task_key": "TEXT DEFAULT ''",
             "broker_task_id": "TEXT DEFAULT ''",
             "retry_count": "INTEGER DEFAULT 0",
         })
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_projects_organization ON projects(organization_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_chat_threads_owner ON chat_threads(project_id, created_by_user_id, updated_at)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_agent_runs_owner ON agent_runs(project_id, created_by_user_id, status)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_content_security_project ON content_security_assessments(project_id, risk_level)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_workflow_tasks_owner ON workflow_tasks(project_id, created_by_user_id, status)"
+        )
         conn.execute(
             """CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_tasks_active_key
                ON workflow_tasks(task_key)
